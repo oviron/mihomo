@@ -1,0 +1,58 @@
+name: oviron release
+
+on:
+  push:
+    tags: ["v*-oviron.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [linux/arm64, darwin/arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          check-latest: true
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          export GOOS=${TARGET%/*} GOARCH=${TARGET#*/} CGO_ENABLED=0
+          go build -tags with_gvisor -trimpath -o mihomo -ldflags "\
+            -X 'github.com/metacubex/mihomo/constant.Version=${GITHUB_REF_NAME}' \
+            -X 'github.com/metacubex/mihomo/constant.BuildTime=$(date -u)' \
+            -w -s -buildid="
+          gzip -9 -c mihomo > "mihomo-${GOOS}-${GOARCH}-${GITHUB_REF_NAME}.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ strategy.job-index }}
+          path: mihomo-*.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base=${GITHUB_REF_NAME%-oviron.*}
+          utls=$(go list -m -f '{{.Replace.Path}} {{.Replace.Version}}' github.com/metacubex/utls)
+          cd dist && sha256sum mihomo-*.gz > SHA256SUMS && cd ..
+          printf 'Upstream MetaCubeX/mihomo %s with `%s` in place of metacubex/utls.\n\nSee FORK.md for what differs.\n' \
+            "$base" "$utls" > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md
