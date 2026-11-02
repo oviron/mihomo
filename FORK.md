@@ -13,9 +13,16 @@ What that means for `client-fingerprint`:
 | `firefox` | Firefox 120, no X25519MLKEM768 | Firefox 158, with X25519MLKEM768 |
 | `firefox120` | Firefox 120 | Firefox 120, same ClientHello |
 | `safari` | Safari 16 | Safari 26.3 |
+| `random` | chrome, safari, ios, firefox weighted 6/3/2/1, picked once per process | same weights, with the `safari` and `firefox` above |
 
 Firefox 158 is the ClientHello of current Firefox stable in normal browsing mode.
-It carries X25519MLKEM768, so Xray REALITY servers from 26.9 on accept it.
+It carries X25519MLKEM768, so Xray REALITY servers from 26.9 on accept it. Over
+REALITY, mihomo strips that key share unless the proxy sets
+`reality-opts.support-x25519mlkem768: true`, in upstream and here alike.
+
+The utls key share fix also changes one thing for the unchanged ClientHellos:
+fingerprints that offer X25519 and P-256 shares, such as `firefox120`, now finish
+the handshake when the server picks P-256 instead of failing.
 
 ## Versions
 
