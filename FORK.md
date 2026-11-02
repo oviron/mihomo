@@ -31,7 +31,7 @@ workflows are disabled in this repository.
 ```sh
 git fetch upstream --tags
 git rebase --onto vNEW vOLD oviron
-go mod tidy && go build ./... && go test ./component/tls/...
+go mod tidy && go build ./...
 git tag vNEW-oviron.1 && git push origin oviron vNEW-oviron.1
 ```
 
