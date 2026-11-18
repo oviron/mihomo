@@ -345,8 +345,8 @@ func (t *Transport) Dial() (net.Conn, error) {
 	reader, writer := io.Pipe()
 
 	header := defaultHeader.Clone()
-	if t.cfg.UserAgent != "" {
-		header.Set("User-Agent", xhttp.UserAgentAlias(t.cfg.UserAgent)) // chrome, firefox, edge as in Xray-core
+	if userAgent := xhttp.UserAgentAlias(t.cfg.UserAgent); userAgent != "" { // chrome, firefox, edge, golang as in Xray-core
+		header.Set("User-Agent", userAgent)
 	}
 
 	request := &http.Request{

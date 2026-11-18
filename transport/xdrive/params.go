@@ -37,7 +37,7 @@ func capped(value uint32, fallback, limit int) int {
 	if value == 0 {
 		return fallback
 	}
-	if int(value) > limit {
+	if value > uint32(limit) {
 		return limit
 	}
 	return int(value)

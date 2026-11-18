@@ -480,4 +480,7 @@ func (s *templateStorage) List(ctx context.Context, prefix string) ([]Entry, err
 	return entries, nil
 }
 
-func (s *templateStorage) Close() error { return nil }
+func (s *templateStorage) Close() error {
+	closeIdle(s.client)
+	return nil
+}

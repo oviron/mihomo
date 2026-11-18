@@ -52,6 +52,8 @@ type walWriter struct {
 	wg  sync.WaitGroup
 
 	mu       sync.Mutex
+	cond     sync.Cond // of mu, for pending
+	pending  int       // segments handed to upload and not stored yet
 	buf      []byte
 	seq      int64
 	lastSize int
@@ -59,6 +61,11 @@ type walWriter struct {
 	closed   bool
 	err      error
 }
+
+// maxPendingSegments bounds, in units of concurrency, the segments that wait
+// for the storage, so that a writer faster than the storage is held back
+// instead of filling the memory. Xray-core has no such bound.
+const maxPendingSegments = 4
 
 func newWALWriter(ctx context.Context, storage Storage, prefix string, p params) *walWriter {
 	w := &walWriter{
@@ -68,6 +75,11 @@ func newWALWriter(ctx context.Context, storage Storage, prefix string, p params)
 		params:  p,
 		sem:     make(chan struct{}, p.concurrency),
 	}
+	w.cond.L = &w.mu
+	go func() { // wake a held back writer when the session ends
+		<-ctx.Done()
+		w.cond.Broadcast()
+	}()
 	go w.flushLoop()
 	return w
 }
@@ -81,6 +93,19 @@ func (w *walWriter) Write(p []byte) (int, error) {
 	}
 	if w.closed {
 		return 0, io.ErrClosedPipe
+	}
+
+	for w.pending >= maxPendingSegments*w.concurrency && w.err == nil && !w.closed && w.ctx.Err() == nil {
+		w.cond.Wait()
+	}
+	if w.err != nil {
+		return 0, w.err
+	}
+	if w.closed {
+		return 0, io.ErrClosedPipe
+	}
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
 	}
 
 	w.buf = append(w.buf, p...)
@@ -153,12 +178,19 @@ func (w *walWriter) flushLocked() error {
 	w.held = 0
 
 	w.wg.Add(1)
+	w.pending++
 	go w.upload(seq, chunk)
 	return nil
 }
 
 func (w *walWriter) upload(seq int64, chunk []byte) {
 	defer w.wg.Done()
+	defer func() {
+		w.mu.Lock()
+		w.pending--
+		w.mu.Unlock()
+		w.cond.Broadcast()
+	}()
 
 	select {
 	case w.sem <- struct{}{}:
@@ -184,6 +216,7 @@ func (w *walWriter) Close() error {
 		return nil
 	}
 	w.closed = true
+	w.cond.Broadcast()
 	for len(w.buf) > 0 && w.err == nil {
 		w.flushLocked()
 	}

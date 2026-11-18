@@ -45,17 +45,20 @@ func TestSessionOverLocalStorage(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, bytes.Equal(data, got))
 
-	_, _ = server.Write([]byte("answer"))
-	require.NoError(t, server.Close())
-
-	left, err := os.ReadDir(filepath.Join(folder, streamsDir, id, uplinkDir))
+	// the reader deletes what it has read, in the background, while the
+	// session is open
+	uplink := filepath.Join(folder, streamsDir, id, uplinkDir)
+	left, err := os.ReadDir(uplink)
 	require.NoError(t, err)
-	// the reader deletes segments in the background
-	for i := 0; i < 100 && len(left) > 0; i++ {
+	for i := 0; i < 300 && len(left) > 0; i++ {
 		time.Sleep(10 * time.Millisecond)
-		left, _ = os.ReadDir(filepath.Join(folder, streamsDir, id, uplinkDir))
+		left, _ = os.ReadDir(uplink)
 	}
 	assert.Empty(t, left)
+
+	_, err = server.Write([]byte("answer"))
+	require.NoError(t, err)
+	require.NoError(t, server.Close())
 }
 
 func cutLast(s string, sep byte) (string, string, bool) {
@@ -87,4 +90,75 @@ func TestServices(t *testing.T) {
 	require.Error(t, err) // no s3 block
 	_, err = NewClient(Config{Service: "template", Template: `{"put":{"url":"http://x/{name}"}}`, HTTPClient: nil})
 	require.Error(t, err)
+}
+
+// slowStorage stores nothing until released.
+type slowStorage struct {
+	Storage
+	release chan struct{}
+}
+
+func (s *slowStorage) Put(ctx context.Context, name string, data []byte) error {
+	select {
+	case <-s.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// A writer faster than the storage is held back, and the end of the session
+// lets it go.
+func TestWriterIsHeldBack(t *testing.T) {
+	storage, err := newLocalStorage(t.TempDir())
+	require.NoError(t, err)
+	slow := &slowStorage{Storage: storage, release: make(chan struct{})}
+	p := paramsFromConfig(&Config{SegmentBytes: 1024, Concurrency: 2})
+	ctx, cancel := context.WithCancel(context.Background())
+	w := newWALWriter(ctx, slow, "streams/x/c2s", p)
+
+	wrote := make(chan int, 1)
+	go func() {
+		n := 0
+		for {
+			if _, err := w.Write(make([]byte, 1024)); err != nil {
+				wrote <- n
+				return
+			}
+			n++
+		}
+	}()
+	time.Sleep(200 * time.Millisecond)
+	w.mu.Lock()
+	pending := w.pending
+	w.mu.Unlock()
+	assert.Equal(t, maxPendingSegments*p.concurrency, pending)
+
+	cancel()
+	select {
+	case n := <-wrote:
+		assert.LessOrEqual(t, n, maxPendingSegments*p.concurrency+1)
+	case <-time.After(3 * time.Second):
+		t.Fatal("the writer was not let go")
+	}
+}
+
+// Close of the client ends its sessions.
+func TestClientCloseEndsSessions(t *testing.T) {
+	client, err := NewClient(Config{Service: "local", RemoteFolder: t.TempDir()})
+	require.NoError(t, err)
+	conn, err := client.Dial(context.Background())
+	require.NoError(t, err)
+	read := make(chan error, 1)
+	go func() {
+		_, err := conn.Read(make([]byte, 1))
+		read <- err
+	}()
+	require.NoError(t, client.Close())
+	select {
+	case err := <-read:
+		require.Error(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("Read did not end with the client")
+	}
 }

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/metacubex/mihomo/component/ech"
+	tlsC "github.com/metacubex/mihomo/component/tls"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/vmess"
 	"github.com/metacubex/mihomo/transport/xdrive"
@@ -93,41 +95,100 @@ func xdriveHTTPClient(dialer C.Dialer, option *VlessOption, ech *ech.Config) *ht
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return dialer.DialContext(ctx, "tcp", addr)
 	}
+	// alpn is what to offer; a client fingerprint offers its own list
+	dialTLS := func(alpn []string) func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return func(ctx context.Context, network, addr string) (net.Conn, error) {
+			ctx, cancel := context.WithTimeout(ctx, C.DefaultTLSTimeout)
+			defer cancel()
+			conn, err := dial(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			host, _, _ := net.SplitHostPort(addr)
+			if option.ServerName != "" {
+				host = option.ServerName
+			}
+			tlsConn, err := vmess.StreamTLSConn(ctx, conn, &vmess.TLSConfig{
+				Host:              host,
+				SkipCertVerify:    option.SkipCertVerify,
+				NameCertVerify:    option.NameCertVerify,
+				FingerPrint:       option.Fingerprint,
+				Certificate:       option.Certificate,
+				PrivateKey:        option.PrivateKey,
+				ClientFingerprint: option.ClientFingerprint,
+				NextProtos:        alpn,
+				ECH:               ech,
+			})
+			if err != nil {
+				_ = conn.Close()
+				return nil, err
+			}
+			return tlsConn, nil
+		}
+	}
+
+	// HTTP/2 the way the other transports force it, see xhttp.NewTransport
+	protocols := new(http.Protocols)
+	protocols.SetUnencryptedHTTP2(true)
+	transport := &xdriveTransport{
+		probe: dialTLS([]string{"h2", "http/1.1"}),
+		h1: &http.Transport{
+			DialContext:           dial,
+			DialTLSContext:        dialTLS([]string{"http/1.1"}),
+			MaxIdleConnsPerHost:   64,
+			IdleConnTimeout:       90 * time.Second,
+			ResponseHeaderTimeout: 60 * time.Second,
+		},
+		h2: &http.Transport{
+			DialTLSContext:        dialTLS([]string{"h2"}),
+			IdleConnTimeout:       90 * time.Second,
+			ResponseHeaderTimeout: 60 * time.Second,
+			Protocols:             protocols,
+		},
+	}
 	return &http.Client{
-		Timeout: 60 * time.Second,
+		Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-		Transport: &http.Transport{
-			DialContext: dial,
-			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				conn, err := dial(ctx, network, addr)
-				if err != nil {
-					return nil, err
-				}
-				host, _, _ := net.SplitHostPort(addr)
-				if option.ServerName != "" {
-					host = option.ServerName
-				}
-				tlsConn, err := vmess.StreamTLSConn(ctx, conn, &vmess.TLSConfig{
-					Host:              host,
-					SkipCertVerify:    option.SkipCertVerify,
-					NameCertVerify:    option.NameCertVerify,
-					FingerPrint:       option.Fingerprint,
-					Certificate:       option.Certificate,
-					PrivateKey:        option.PrivateKey,
-					ClientFingerprint: option.ClientFingerprint,
-					NextProtos:        []string{"http/1.1"},
-					ECH:               ech,
-				})
-				if err != nil {
-					_ = conn.Close()
-					return nil, err
-				}
-				return tlsConn, nil
-			},
-			MaxIdleConnsPerHost: 64,
-			IdleConnTimeout:     90 * time.Second,
-		},
 	}
+}
+
+// xdriveTransport speaks to each HTTPS host the protocol its TLS handshake
+// settles on: storage services differ, and with a client fingerprint the ALPN
+// list is that of the browser, so the choice is the server's. The first
+// request to a host makes one handshake to find out.
+type xdriveTransport struct {
+	probe  func(ctx context.Context, network, addr string) (net.Conn, error)
+	h1, h2 *http.Transport
+	useH2  sync.Map // host:port -> bool
+}
+
+func (t *xdriveTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.URL.Scheme != "https" {
+		return t.h1.RoundTrip(req)
+	}
+	addr := req.URL.Host
+	if req.URL.Port() == "" {
+		addr = net.JoinHostPort(req.URL.Hostname(), "443")
+	}
+	h2, known := t.useH2.Load(addr)
+	if !known {
+		conn, err := t.probe(req.Context(), "tcp", addr)
+		if err != nil {
+			return nil, err
+		}
+		h2 = tlsC.GetTLSConnectionState(conn).NegotiatedProtocol == "h2"
+		_ = conn.Close()
+		t.useH2.Store(addr, h2)
+	}
+	if h2.(bool) {
+		return t.h2.RoundTrip(req)
+	}
+	return t.h1.RoundTrip(req)
+}
+
+func (t *xdriveTransport) CloseIdleConnections() {
+	t.h1.CloseIdleConnections()
+	t.h2.CloseIdleConnections()
 }

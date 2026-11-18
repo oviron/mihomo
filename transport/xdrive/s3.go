@@ -145,7 +145,10 @@ func newS3Storage(c *Config) (Storage, error) {
 	return s, nil
 }
 
-func (s *s3Storage) Close() error { return nil }
+func (s *s3Storage) Close() error {
+	closeIdle(s.client)
+	return nil
+}
 
 // SigV4 requires %20 for spaces, uppercase escapes, and unescaped key separators.
 func s3EscapePath(value string) string {

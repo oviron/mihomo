@@ -9,7 +9,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 )
 
 const tempPrefix = ".xdrive-tmp-"
@@ -75,6 +77,11 @@ func (s *localStorage) Get(ctx context.Context, name string) ([]byte, error) {
 		return nil, err
 	}
 	data, err := os.ReadFile(full)
+	// on Windows a file that is just being renamed into place cannot be opened
+	for wait := 0; err != nil && !os.IsNotExist(err) && runtime.GOOS == "windows" && wait < 200 && ctx.Err() == nil; wait++ {
+		time.Sleep(10 * time.Millisecond)
+		data, err = os.ReadFile(full)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, errNotFound

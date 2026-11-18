@@ -16,6 +16,7 @@ type Conn struct {
 	writer *walWriter
 	reader *walReader
 
+	readMu  sync.Mutex
 	readBuf []byte
 
 	deadlineMu    sync.Mutex
@@ -36,6 +37,8 @@ func newConn(ctx context.Context, storage Storage, writePrefix, readPrefix strin
 }
 
 func (c *Conn) Read(b []byte) (int, error) {
+	c.readMu.Lock()
+	defer c.readMu.Unlock()
 	if len(c.readBuf) == 0 {
 		data, err := c.receive()
 		if err != nil {
@@ -84,10 +87,21 @@ func (c *Conn) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// closeWait bounds how long Close keeps storing what is still buffered.
+const closeWait = 10 * time.Second
+
 // Close stores what is still buffered and the end mark, then stops reading.
+// A storage that does not keep up is given closeWait; after that the session
+// is dropped as it is and the server ends it by its own timeout.
 func (c *Conn) Close() error {
 	c.closeOnce.Do(func() {
-		c.closeErr = c.writer.Close()
+		done := make(chan error, 1)
+		go func() { done <- c.writer.Close() }()
+		select {
+		case c.closeErr = <-done:
+		case <-time.After(closeWait):
+			c.closeErr = os.ErrDeadlineExceeded
+		}
 		c.cancel()
 	})
 	return c.closeErr

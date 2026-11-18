@@ -66,7 +66,8 @@ func ApplyBrowserAlias(header http.Header) {
 }
 
 // UserAgentAlias resolves the names Xray-core takes for the user agent of
-// gRPC: chrome, firefox and edge. Anything else is returned as it is.
+// gRPC: chrome, firefox, edge and golang, which stands for the default and
+// comes back empty. Anything else is returned as it is.
 func UserAgentAlias(userAgent string) string {
 	switch userAgent {
 	case "chrome":
@@ -75,6 +76,8 @@ func UserAgentAlias(userAgent string) string {
 		return FirefoxUA
 	case "edge":
 		return MSEdgeUA
+	case "golang": // the user agent of the gRPC library itself
+		return ""
 	}
 	return userAgent
 }

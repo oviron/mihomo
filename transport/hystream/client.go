@@ -186,8 +186,7 @@ func (c *Client) Dial(ctx context.Context) (net.Conn, error) {
 		if err != nil {
 			// only a connection that has ended is replaced: when the server
 			// has no stream to give, the streams that run keep running
-			if conn.Context().Err() != nil && attempt == 0 {
-				c.drop(conn)
+			if conn.Context().Err() != nil && attempt == 0 && c.drop(ctx, conn) {
 				continue
 			}
 			return nil, err
@@ -197,12 +196,17 @@ func (c *Client) Dial(ctx context.Context) (net.Conn, error) {
 }
 
 // drop forgets conn so that the next stream opens a new connection.
-func (c *Client) drop(conn *quic.Conn) {
-	c.lock <- struct{}{}
-	defer func() { <-c.lock }()
+func (c *Client) drop(ctx context.Context, conn *quic.Conn) bool {
+	select {
+	case c.lock <- struct{}{}:
+		defer func() { <-c.lock }()
+	case <-ctx.Done():
+		return false
+	}
 	if c.conn == conn {
 		c.closeConnLocked(closeErrCodeOK)
 	}
+	return true
 }
 
 func (c *Client) closeConnLocked(code quic.ApplicationErrorCode) {
@@ -243,11 +247,23 @@ func (c *streamConn) Write(b []byte) (int, error) {
 		return c.stream.Write(b)
 	}
 	// in one write, so that the frame type and the first bytes of the proxy
-	// protocol leave together; and once only, whatever becomes of the write
-	c.started = true
-	first := quicvarint.Append(make([]byte, 0, quicvarint.Len(frameTypeTCPRequest)+len(b)), frameTypeTCPRequest)
-	if _, err := c.stream.Write(append(first, b...)); err != nil {
-		return 0, err
+	// protocol leave together; and once only: when any of it has gone out, a
+	// later write must not repeat the frame type
+	prefix := quicvarint.Len(frameTypeTCPRequest)
+	first := quicvarint.Append(make([]byte, 0, prefix+len(b)), frameTypeTCPRequest)
+	n, err := c.stream.Write(append(first, b...))
+	if n > 0 {
+		c.started = true
+	}
+	if n -= prefix; n < 0 {
+		n = 0
+	}
+	if err != nil {
+		if c.started && n == 0 && len(b) > 0 {
+			// the frame type went out in part: the stream cannot be continued
+			c.stream.CancelWrite(0)
+		}
+		return n, err
 	}
 	return len(b), nil
 }

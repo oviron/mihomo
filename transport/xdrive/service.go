@@ -8,9 +8,16 @@ import (
 	"github.com/metacubex/randv2"
 )
 
-// HTTPDoer sends the requests of the remote services.
+// HTTPDoer sends the requests of the remote services. When it also has
+// CloseIdleConnections, Close of the client calls it.
 type HTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
+}
+
+func closeIdle(client HTTPDoer) {
+	if c, ok := client.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
 }
 
 // The retry policy of the remote services, as in Xray-core.

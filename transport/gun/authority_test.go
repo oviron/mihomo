@@ -61,7 +61,7 @@ func TestUserAgentAlias(t *testing.T) {
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", l.Addr().String())
 	}
-	for agent, want := range map[string]string{"": "grpc-go/1.36.0", "chrome": "Chrome/", "firefox": "Firefox/", "edge": "Edg/", "my-agent": "my-agent"} {
+	for agent, want := range map[string]string{"": "grpc-go/1.36.0", "chrome": "Chrome/", "firefox": "Firefox/", "edge": "Edg/", "my-agent": "my-agent", "golang": "grpc-go/1.36.0"} {
 		transport := NewTransport(dial, nil, &Config{ServiceName: "gun", Host: "example.org", UserAgent: agent})
 		conn, err := transport.Dial()
 		require.NoError(t, err)

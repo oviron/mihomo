@@ -79,6 +79,8 @@ type Config struct {
 type Client struct {
 	storage Storage
 	params  params
+	ctx     context.Context // of the sessions, ends with Close
+	cancel  context.CancelFunc
 }
 
 func NewClient(cfg Config) (*Client, error) {
@@ -99,7 +101,8 @@ func NewClient(cfg Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{storage: storage, params: paramsFromConfig(&cfg)}, nil
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Client{storage: storage, params: paramsFromConfig(&cfg), ctx: ctx, cancel: cancel}, nil
 }
 
 func newSessionID() (string, error) {
@@ -124,9 +127,11 @@ func (c *Client) Dial(ctx context.Context) (net.Conn, error) {
 		return nil, fmt.Errorf("xdrive: failed to announce session %s: %w", session, err)
 	}
 	prefix := streamsDir + "/" + session
-	return newConn(context.Background(), c.storage, prefix+"/"+uplinkDir, prefix+"/"+downlinkDir, c.params), nil
+	return newConn(c.ctx, c.storage, prefix+"/"+uplinkDir, prefix+"/"+downlinkDir, c.params), nil
 }
 
+// Close ends the sessions that are still open and lets go of the storage.
 func (c *Client) Close() error {
+	c.cancel()
 	return c.storage.Close()
 }
