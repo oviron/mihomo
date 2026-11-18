@@ -327,6 +327,34 @@ func TestDialerFor(t *testing.T) {
 	require.Error(t, err)
 }
 
+// The masks ValidateProxy built are the ones the dialer of the proxy uses,
+// once; an option that changed, or a second proxy, is parsed again.
+func TestParsedConfigIsHandedOver(t *testing.T) {
+	built := 0
+	mask.RegisterUDP("test-counted", func(map[string]any) (mask.UDPMask, error) { built++; return tag('c'), nil })
+	raw := func() map[string]any { return map[string]any{"udp": masks("test-counted")} }
+
+	require.NoError(t, ValidateProxy(map[string]any{"finalmask": raw()}))
+	require.Equal(t, 1, built)
+	require.NotNil(t, ConfigOf(NewDialer(plain{}, raw()))) // an equal map, as the proxy decoder makes
+	require.Equal(t, 1, built)
+	NewDialer(plain{}, raw())
+	require.Equal(t, 2, built, "handed over once")
+
+	require.NoError(t, ValidateProxy(map[string]any{"finalmask": raw()}))
+	NewDialer(plain{}, map[string]any{"udp": masks("test-counted", "test-a")})
+	require.Equal(t, 4, built, "another option is parsed on its own")
+
+	// what is never taken does not pile up
+	for i := 0; i < 100; i++ {
+		require.NoError(t, ValidateProxy(map[string]any{"finalmask": map[string]any{"udp": masks("test-a"), "quic-params": map[string]any{"max-idle-timeout": 4 + i}}}))
+	}
+	handover.Lock()
+	defer handover.Unlock()
+	require.LessOrEqual(t, len(handover.configs), handoverLimit)
+	require.Equal(t, len(handover.configs), len(handover.keys))
+}
+
 func TestBrokenOption(t *testing.T) {
 	for name, raw := range map[string]map[string]any{
 		"unknown mask":     {"tcp": masks("no-such-mask")},

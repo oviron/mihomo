@@ -240,9 +240,11 @@ func toInt(value any) (int64, error) {
 	return 0, fmt.Errorf("not a number")
 }
 
-// BufferSize is the size of the buffers the UDP masks read datagrams into.
-// A masked datagram is larger than what the caller's buffer may hold.
-const BufferSize = pool.UDPBufferSize
+// BufferSize is the size of the buffers the UDP masks read datagrams into:
+// the largest UDP datagram. A masked datagram can be several times what the
+// caller's buffer holds, and one that is cut short may still decode, into
+// something shorter than what was sent.
+const BufferSize = 65535
 
 // GetBuffer returns a buffer of BufferSize bytes, to be given back with PutBuffer.
 func GetBuffer() []byte {

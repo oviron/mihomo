@@ -29,6 +29,9 @@ var _ C.Dialer = (*Dialer)(nil)
 // option makes every dial fail with the parse error: the outbound constructors
 // have no way to return it. adapter.ParseProxy rejects such options earlier.
 func NewDialer(inner C.Dialer, raw map[string]any) C.Dialer {
+	if config := takeOver(raw); config != nil {
+		return &Dialer{inner: inner, config: config}
+	}
 	config, err := Parse(raw)
 	return &Dialer{inner: inner, config: config, err: err}
 }

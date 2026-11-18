@@ -20,9 +20,11 @@
 package finalmask
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 
 	"github.com/metacubex/mihomo/transport/finalmask/mask"
 )
@@ -70,6 +72,7 @@ func ValidateProxy(mapping map[string]any) error {
 		if err != nil {
 			return err
 		}
+		handOver(option, config)
 		if config.directOnly {
 			// the names as the proxy decoder matches them
 			for name, value := range mapping {
@@ -146,4 +149,62 @@ func (c *Config) HasTCP() bool {
 // HasUDP tells whether UDP sockets are masked.
 func (c *Config) HasUDP() bool {
 	return c != nil && (len(c.udp) > 0 || c.carrier != nil)
+}
+
+// Building the masks can cost: tables are computed, keys derived, scripts
+// run. ValidateProxy builds them to check the option, and the constructor of
+// the proxy, which only has the raw option again, would build them a second
+// time. The parsed config waits here for it instead, under the option's JSON.
+var handover struct {
+	sync.Mutex
+	keys    []string // oldest first
+	configs map[string]*Config
+}
+
+const handoverLimit = 16 // options checked whose proxy was never built are dropped
+
+func handoverKey(raw map[string]any) (string, bool) {
+	key, err := json.Marshal(raw) // map keys are sorted
+	return string(key), err == nil
+}
+
+func handOver(raw map[string]any, config *Config) {
+	key, ok := handoverKey(raw)
+	if !ok {
+		return
+	}
+	handover.Lock()
+	defer handover.Unlock()
+	if handover.configs == nil {
+		handover.configs = make(map[string]*Config)
+	}
+	if _, waiting := handover.configs[key]; !waiting {
+		handover.keys = append(handover.keys, key)
+	}
+	handover.configs[key] = config
+	for len(handover.keys) > handoverLimit {
+		delete(handover.configs, handover.keys[0])
+		handover.keys = handover.keys[1:]
+	}
+}
+
+// takeOver returns the config ValidateProxy parsed from the same option, once.
+func takeOver(raw map[string]any) *Config {
+	key, ok := handoverKey(raw)
+	if !ok {
+		return nil
+	}
+	handover.Lock()
+	defer handover.Unlock()
+	config := handover.configs[key]
+	if config != nil {
+		delete(handover.configs, key)
+		for i, k := range handover.keys {
+			if k == key {
+				handover.keys = append(handover.keys[:i], handover.keys[i+1:]...)
+				break
+			}
+		}
+	}
+	return config
 }
