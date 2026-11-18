@@ -17,6 +17,7 @@ import (
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/ntp"
+	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/gun"
 	"github.com/metacubex/mihomo/transport/jls"
 	"github.com/metacubex/mihomo/transport/mekya"
@@ -98,6 +99,7 @@ type MKCPOptions struct {
 	ReadBuffer       uint32 `proxy:"read-buffer,omitempty"`
 	Seed             string `proxy:"seed,omitempty"`
 	Header           string `proxy:"header,omitempty"`
+	Raw              bool   `proxy:"raw,omitempty"` // bare mKCP as in Xray-core 26.x, obfuscation is left to finalmask
 }
 
 func (o MKCPOptions) Build() mkcp.Config {
@@ -111,6 +113,7 @@ func (o MKCPOptions) Build() mkcp.Config {
 		ReadBuffer:       o.ReadBuffer,
 		Seed:             o.Seed,
 		Header:           o.Header,
+		Raw:              o.Raw,
 	}
 }
 
@@ -566,6 +569,9 @@ func NewVmess(option VmessOption) (*Vmess, error) {
 		switch securityMode {
 		case "ShadowTLS", "Restls", "JLS":
 			return nil, fmt.Errorf("%s only supports TCP transports", securityMode)
+		}
+		if err := finalmask.CheckMKCP(v.dialer, option.MKCPOpts.Raw, option.MKCPOpts.Seed != "" || option.MKCPOpts.Header != ""); err != nil {
+			return nil, err
 		}
 	}
 

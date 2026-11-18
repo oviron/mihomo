@@ -16,6 +16,7 @@ import (
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/transport/finalmask"
 
 	"github.com/gofrs/uuid/v5"
 )
@@ -198,6 +199,9 @@ type BasicOption struct {
 	IPVersion   C.DNSPrefer `proxy:"ip-version,omitempty"`
 	DialerProxy string      `proxy:"dialer-proxy,omitempty"` // don't apply this option into groups, but can set a group name in a proxy
 
+	// FinalMask is the Xray-core finalmask applied to the connection to the server, see transport/finalmask.
+	FinalMask map[string]any `proxy:"finalmask,omitempty"`
+
 	//
 	// The following parameters are used internally, assign value by the structure decoder are disallowed
 	//
@@ -214,6 +218,9 @@ func (b *BasicOption) NewDialer(opts []dialer.Option) C.Dialer {
 		} else {
 			cDialer = dialer.NewDialer(opts...)
 		}
+	}
+	if b.FinalMask != nil {
+		cDialer = finalmask.NewDialer(cDialer, b.FinalMask)
 	}
 	return cDialer
 }

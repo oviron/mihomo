@@ -15,6 +15,7 @@ import (
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/tuic/common"
 
 	"github.com/metacubex/http"
@@ -142,6 +143,10 @@ func NewHysteria2(option Hysteria2Option) (*Hysteria2, error) {
 		option: &option,
 	}
 	outbound.dialer = option.NewDialer(outbound.DialOptions())
+	if err := finalmask.CheckHysteria2(outbound.dialer, option.Ports != "", option.RealmOpts.Enable); err != nil {
+		return nil, err
+	}
+	quicParams := finalmask.QuicParamsOf(outbound.dialer) // nil without finalmask.quic-params
 
 	var salamanderPassword string
 	var geckoPassword string
@@ -204,6 +209,7 @@ func NewHysteria2(option Hysteria2Option) (*Hysteria2, error) {
 		InitialConnectionReceiveWindow: option.InitialConnectionReceiveWindow,
 		MaxConnectionReceiveWindow:     option.MaxConnectionReceiveWindow,
 	}
+	quicParams.ApplyTo(quicConfig)
 
 	clientOptions := hysteria2.ClientOptions{
 		Context:            context.TODO(),
@@ -233,6 +239,7 @@ func NewHysteria2(option Hysteria2Option) (*Hysteria2, error) {
 		},
 		HandshakeTimeout: time.Duration(option.HandshakeTimeout) * time.Second,
 	}
+	quicParams.ApplyHysteria2(&clientOptions, option.CWND)
 
 	var serverPorts []uint16
 	if option.Ports != "" {
@@ -289,7 +296,7 @@ func NewHysteria2(option Hysteria2Option) (*Hysteria2, error) {
 			STUNServers: option.RealmOpts.STUNServers,
 			HTTPClient: &http.Client{
 				Transport: &http.Transport{
-					DialContext:     outbound.dialer.DialContext,
+					DialContext:     finalmask.Raw(outbound.dialer).DialContext, // not the hysteria server
 					TLSClientConfig: httpTLSClientConfig,
 					// from http.DefaultTransport
 					ForceAttemptHTTP2:     true,
