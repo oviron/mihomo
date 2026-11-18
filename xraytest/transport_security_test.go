@@ -179,6 +179,22 @@ func TestTransportTLS(t *testing.T) {
 			client: "tls: true\nservername: example.org\nfingerprint: %PIN%\n",
 		},
 		{
+			name:   "pinned-certificate-list",
+			stream: trRawServer(trTLSServer),
+			client: "tls: true\nservername: example.org\nfingerprint: \"0000000000000000000000000000000000000000000000000000000000000000, %PIN%\"\n",
+		},
+		{
+			name:   "pinned-certificate-list-utls",
+			stream: trRawServer(trTLSServer),
+			client: "tls: true\nservername: example.org\nclient-fingerprint: chrome\nfingerprint: \"0000000000000000000000000000000000000000000000000000000000000000,%PIN%\"\n",
+		},
+		{
+			name:   "pinned-certificate-list-without-the-certificate",
+			stream: trRawServer(trTLSServer),
+			client: "tls: true\nservername: example.org\nfingerprint: \"0000000000000000000000000000000000000000000000000000000000000000,1111111111111111111111111111111111111111111111111111111111111111\"\n",
+			gap:    "not a gap: no pin of the list matches",
+		},
+		{
 			name:   "ech-go-tls",
 			stream: trRawServer(ech),
 			client: trTLSClient + "ech-opts: {enable: true, config: %ECHLIST%}\n",
