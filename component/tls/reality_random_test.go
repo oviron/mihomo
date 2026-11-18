@@ -22,6 +22,18 @@ func TestHasX25519MLKEM768(t *testing.T) {
 	}
 }
 
+func TestHybridFingerprint(t *testing.T) {
+	for i := 0; i < 20; i++ { // ios is always replaced, by one that has the key share
+		picked := hybridFingerprint(fingerprints["ios"])
+		assert.True(t, hasX25519MLKEM768(picked), picked.Client)
+		assert.Contains(t, []string{"Chrome", "Safari", "Firefox"}, picked.Client)
+	}
+	for _, name := range []string{"chrome", "safari", "firefox"} { // the rest is kept
+		picked := hybridFingerprint(fingerprints[name])
+		assert.Equal(t, fingerprints[name].Client+fingerprints[name].Version, picked.Client+picked.Version)
+	}
+}
+
 func TestRealityFingerprint(t *testing.T) {
 	ios := fingerprints["ios"]
 	hybrid := &RealityConfig{SupportX25519MLKEM768: true}
