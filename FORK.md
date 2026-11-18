@@ -1,9 +1,10 @@
 # oviron/mihomo
 
-Fork of [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) whose only change
-is the TLS fingerprint library: `github.com/metacubex/utls` is replaced with
+Fork of [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) that changes
+only TLS fingerprints: `github.com/metacubex/utls` is replaced with
 [oviron/utls](https://github.com/oviron/utls) (MetaCubeX `v1.9.0-alpha.1` plus
-a Firefox 158 parrot). See its `FORK.md` for the details.
+a Firefox 158 parrot and Chrome 155 from refraction-networking/utls). See its
+`FORK.md` for the details.
 
 What that means for `client-fingerprint`:
 
@@ -11,6 +12,7 @@ What that means for `client-fingerprint`:
 |---|---|---|
 | `chrome` | Chrome 133 | Chrome 133, same ClientHello |
 | `firefox` | Firefox 148, with X25519MLKEM768 | Firefox 158, with X25519MLKEM768 |
+| `chrome155` | — | Chrome 155, with X25519MLKEM768 |
 | `firefox120` | Firefox 120 | Firefox 120, same ClientHello |
 | `safari` | Safari 26.3 | Safari 26.3 |
 | `random` | chrome, safari, ios, firefox weighted 6/3/2/1, picked once per process | same weights, with the `firefox` above |
@@ -19,6 +21,11 @@ Firefox 158 is the ClientHello of current Firefox stable in normal browsing mode
 It carries X25519MLKEM768, so Xray REALITY servers from 26.9 on accept it. Over
 REALITY, mihomo strips that key share unless the proxy sets
 `reality-opts.support-x25519mlkem768: true`, in upstream and here alike.
+
+`chrome155` is the one name the fork adds: Chrome 155 on macOS as
+refraction-networking/utls captured it, the default fingerprint of Xray-core
+v26.11.9. Its BoringSSL GREASE ECH payload length varies per connection like the
+browser's. `chrome` stays Chrome 133.
 
 The utls key share fix also changes one thing for the unchanged ClientHellos:
 fingerprints that offer X25519 and P-256 shares, such as `firefox120`, now finish

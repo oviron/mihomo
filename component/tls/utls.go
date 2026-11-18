@@ -86,6 +86,9 @@ var fingerprints = map[string]UClientHelloID{
 	"qq":      utls.HelloQQ_Auto,
 	"random":  {},
 
+	// Chrome 155 with X25519MLKEM768; "chrome" stays Chrome 133
+	"chrome155": utls.HelloChrome_155,
+
 	// classical fingerprints without X25519MLKEM768
 	"chrome120":  utls.HelloChrome_120,
 	"firefox120": utls.HelloFirefox_120,
