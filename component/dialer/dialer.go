@@ -39,6 +39,7 @@ func GetTcpConcurrent() bool {
 
 func DialContext(ctx context.Context, network, address string, options ...Option) (net.Conn, error) {
 	opt := applyOptions(options...)
+	address = opt.sockopt.rewriteAddress(ctx, address, opt.resolver)
 
 	if opt.network == 4 || opt.network == 6 {
 		if strings.Contains(network, "tcp") {

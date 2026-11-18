@@ -18,6 +18,12 @@ type Sockopt struct {
 	TCPMaxSeg            int    `proxy:"tcp-max-seg,omitempty"`
 	TCPWindowClamp       int    `proxy:"tcp-window-clamp,omitempty"`
 	TCPCongestion        string `proxy:"tcp-congestion,omitempty"`
+	// AddressPortStrategy takes the address and the port of the server from a
+	// DNS record of the server name: srvportonly, srvaddressonly,
+	// srvportandaddress (server is _service._proto.example.org) or txtportonly,
+	// txtaddressonly, txtportandaddress (a TXT record "host:port"). It covers
+	// what is dialed by name, the TCP transports and mKCP, not the QUIC ones.
+	AddressPortStrategy string `proxy:"address-port-strategy,omitempty"`
 }
 
 // appendTo adds the socket options to the options of a dialer.
@@ -28,7 +34,12 @@ func (s Sockopt) appendTo(opts []dialer.Option) []dialer.Option {
 	if !dialer.SockoptSupported && (s.TCPUserTimeout > 0 || s.TCPMaxSeg > 0 || s.TCPWindowClamp > 0 || s.TCPCongestion != "") {
 		log.Warnln("sockopt: tcp-user-timeout, tcp-max-seg, tcp-window-clamp and tcp-congestion are Linux socket options, ignored on %s", runtime.GOOS)
 	}
+	strategy, err := dialer.ParseAddressPortStrategy(s.AddressPortStrategy)
+	if err != nil {
+		log.Warnln("sockopt: %v, ignored", err)
+	}
 	return append(opts[:len(opts):len(opts)], dialer.WithSockopt(dialer.Sockopt{
+		AddressPortStrategy:  strategy,
 		TCPKeepAliveIdle:     s.TCPKeepAliveIdle,
 		TCPKeepAliveInterval: s.TCPKeepAliveInterval,
 		TCPUserTimeout:       s.TCPUserTimeout,

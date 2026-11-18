@@ -23,6 +23,8 @@ type Sockopt struct {
 	TCPWindowClamp int
 	// TCPCongestion is TCP_CONGESTION, the name of the congestion control.
 	TCPCongestion string
+	// AddressPortStrategy is one of the AddressPort constants, see address_port.go.
+	AddressPortStrategy string
 }
 
 // WithSockopt sets the TCP socket options of the dialer.

@@ -1,6 +1,19 @@
 package xraytest
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/netip"
+	"testing"
+	"time"
+
+	"github.com/metacubex/mihomo/adapter"
+	"github.com/metacubex/mihomo/component/resolver"
+
+	"github.com/miekg/dns"
+	"github.com/stretchr/testify/require"
+)
 
 func TestTransportGRPC(t *testing.T) {
 	grpc := func(settings, security string) string {
@@ -209,4 +222,72 @@ func TestTransportHysteria(t *testing.T) {
 			gap:    "no hysteria network for vless",
 		},
 	})
+}
+
+// trZone is a resolver of the proxy servers with a few records of its own:
+// what a DNS zone of the server operator would hold.
+type trZone struct {
+	records []string
+}
+
+func (z *trZone) ExchangeContext(ctx context.Context, m *dns.Msg) (*dns.Msg, error) {
+	reply := new(dns.Msg)
+	reply.SetReply(m)
+	for _, record := range z.records {
+		rr, err := dns.NewRR(record)
+		if err != nil {
+			return nil, err
+		}
+		if rr.Header().Name == m.Question[0].Name && rr.Header().Rrtype == m.Question[0].Qtype {
+			reply.Answer = append(reply.Answer, rr)
+		}
+	}
+	return reply, nil
+}
+
+func (z *trZone) LookupIP(ctx context.Context, host string) ([]netip.Addr, error) {
+	return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+}
+func (z *trZone) LookupIPv4(ctx context.Context, host string) ([]netip.Addr, error) {
+	return z.LookupIP(ctx, host)
+}
+func (z *trZone) LookupIPv6(ctx context.Context, host string) ([]netip.Addr, error) {
+	return nil, errors.New("no IPv6")
+}
+func (z *trZone) ResolveECH(ctx context.Context, host string) ([]byte, error) {
+	return nil, errors.New("no ECH")
+}
+func (z *trZone) Invalid() bool    { return true }
+func (z *trZone) ClearCache()      {}
+func (z *trZone) ResetConnection() {}
+
+// The server is found through a SRV or a TXT record of its name, so its
+// address and port can be moved by changing the record.
+func TestTransportAddressPortStrategy(t *testing.T) {
+	tg := startTargets(t)
+	port := freePort(t)
+	trStartXray(t, trInbound(t, "vless", trFill(t, trXHTTPServer(trTLSServer, ""), port, 0), port))
+
+	old := resolver.ProxyServerHostResolver
+	resolver.ProxyServerHostResolver = &trZone{records: []string{
+		fmt.Sprintf(`_xray._tcp.example.org. 60 IN SRV 0 0 %d entry.example.org.`, port),
+		fmt.Sprintf(`moved.example.org. 60 IN TXT "127.0.0.1:%d"`, port),
+	}}
+	defer func() { resolver.ProxyServerHostResolver = old }()
+
+	for server, strategy := range map[string]string{
+		"_xray._tcp.example.org": "SrvPortAndAddress",
+		"moved.example.org":      "txtportandaddress",
+	} {
+		proxy, err := adapter.ParseProxy(map[string]any{
+			"name": "xray", "type": "vless", "uuid": userUUID,
+			"server": server, "port": 1, // the port to dial comes from the record
+			"tls": true, "servername": trServerName, "skip-cert-verify": true,
+			"network": "xhttp", "xhttp-opts": map[string]any{"path": "/xh"},
+			"sockopt": map[string]any{"address-port-strategy": strategy},
+		})
+		require.NoError(t, err)
+		require.NoError(t, trRoundTrip(proxy, tg, 1<<20, 20*time.Second), strategy)
+		_ = proxy.Close()
+	}
 }
