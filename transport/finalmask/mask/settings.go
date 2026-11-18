@@ -160,12 +160,11 @@ func RandBytesBetween(b []byte, from, to byte) {
 // of byte values, or base64 text as encoding/json reads a []byte), "str",
 // "hex" or "base64".
 func ParseBytes(value any, typ string) ([]byte, error) {
-	if value == nil {
-		return nil, nil
-	}
 	switch strings.ToLower(typ) {
 	case "", "array":
 		switch v := value.(type) {
+		case nil:
+			return nil, nil
 		case []byte:
 			return v, nil
 		case string:
