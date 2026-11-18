@@ -68,6 +68,9 @@ func (s *StreamSettings) wrap(inner C.Dialer, opts []dialer.Option) C.Dialer {
 		if d.reality != nil && d.err == nil {
 			d.err = errors.New("stream-settings: REALITY goes with raw, grpc and xhttp only")
 		}
+		if d.err == nil && (s.Network == "kcp" || s.Network == "mkcp") {
+			d.err = checkMKCP(inner, s.MKCPOpts)
+		}
 	default:
 		d.err = fmt.Errorf("stream-settings: unknown network %q", s.Network)
 	}

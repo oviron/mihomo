@@ -170,10 +170,53 @@ func TestTransportMKCP(t *testing.T) {
 	trRun(t, []trCase{
 		{
 			name:     "vmess-no-mask",
-			gap:      "mihomo always applies the legacy mKCP packet authenticator, Xray 26 has it as the mkcp-legacy mask only",
+			gap:      "without mkcp-opts.raw mihomo applies the legacy mKCP packet authenticator, which Xray 26 has as the mkcp-legacy mask only",
 			protocol: "vmess",
 			stream:   `"network":"kcp","kcpSettings":{}`,
 			client:   vmess + "network: kcp\n",
+		},
+		{
+			// bare mKCP, as an Xray 26 inbound without masks speaks it
+			name:     "vmess-raw",
+			protocol: "vmess",
+			stream:   `"network":"kcp","kcpSettings":{}`,
+			client:   vmess + "network: kcp\nmkcp-opts: {raw: true}\n",
+		},
+		{
+			name:   "vless-raw",
+			stream: `"network":"kcp","kcpSettings":{}`,
+			client: "network: kcp\nmkcp-opts: {raw: true}\n",
+		},
+		{
+			name:     "trojan-raw",
+			protocol: "trojan",
+			stream:   `"network":"kcp","kcpSettings":{}`,
+			client:   "type: trojan\npassword: %UUID%\ntls: false\nnetwork: kcp\nmkcp-opts: {raw: true}\n",
+		},
+		{
+			// the mask of finalmask over bare mKCP: the same bytes as the built-in obfuscation
+			name:   "vless-raw-mkcp-legacy-mask",
+			stream: `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy","settings":{"value":"secret"}}]}`,
+			client: "type: vless\nuuid: %UUID%\nnetwork: kcp\nmkcp-opts: {raw: true}\nfinalmask: {udp: [{type: mkcp-legacy, settings: {value: secret}}]}\n",
+		},
+		{
+			name:     "vless-mkcp-legacy-mask-without-raw",
+			stream:   `"network":"kcp","kcpSettings":{}`,
+			client:   "type: vless\nuuid: %UUID%\nnetwork: kcp\nfinalmask: {udp: [{type: mkcp-legacy}]}\n",
+			parseErr: "raw",
+		},
+		{
+			name:     "trojan-raw-with-seed",
+			protocol: "trojan",
+			stream:   `"network":"kcp","kcpSettings":{}`,
+			client:   "type: trojan\npassword: %UUID%\ntls: false\nnetwork: kcp\nmkcp-opts: {raw: true, seed: secret}\n",
+			parseErr: "raw",
+		},
+		{
+			name:     "shadowsocks-stream-settings-raw",
+			protocol: "shadowsocks",
+			stream:   `"network":"kcp","kcpSettings":{}`,
+			client:   "type: ss\ncipher: aes-128-gcm\npassword: %UUID%\nstream-settings: {network: kcp, mkcp-opts: {raw: true}}\n",
 		},
 		{
 			name:     "vmess-legacy-mask",
@@ -212,8 +255,8 @@ func TestTransportMKCP(t *testing.T) {
 			name:   "vless-tti-out-of-range",
 			stream: `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]}`,
 			client: "network: kcp\nmkcp-opts: {tti: 1001}\n",
-			gap:    "not a gap: Xray-core refuses such a tti too",
-			gapErr: "tti must be between",
+			// Xray-core refuses such a tti too
+			parseErr: "tti must be between",
 		},
 		{
 			name:     "trojan-tls",

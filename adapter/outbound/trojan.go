@@ -340,6 +340,11 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 		hexPassword: trojan.Key(option.Password),
 	}
 	t.dialer = option.NewDialer(t.DialOptions())
+	if option.Network == "kcp" || option.Network == "mkcp" {
+		if err := checkMKCP(t.dialer, option.MKCPOpts); err != nil {
+			return nil, err
+		}
+	}
 
 	var err error
 	t.echConfig, err = option.ECHOpts.Parse()

@@ -606,6 +606,11 @@ func NewVless(option VlessOption) (*Vless, error) {
 	if securityMode != "" && !option.TLS {
 		return nil, fmt.Errorf("%s requires TLS", securityMode)
 	}
+	if option.Network == "kcp" || option.Network == "mkcp" {
+		if err := checkMKCP(v.dialer, option.MKCPOpts); err != nil {
+			return nil, err
+		}
+	}
 
 	switch option.Network {
 	case "h2":
