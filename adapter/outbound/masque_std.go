@@ -21,6 +21,7 @@ import (
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/masque"
 	"github.com/metacubex/mihomo/transport/vmess"
 
@@ -63,6 +64,11 @@ func (w *Masque) initStandard(option MasqueOption) error {
 	case "", "h3", "h2":
 	default:
 		return fmt.Errorf("masque: network %s needs a WARP private-key", option.Network)
+	}
+	if option.Network != "h2" {
+		if err := finalmask.QuicParamsOf(w.dialer).CheckHTTP3([]string{"h3"}); err != nil {
+			return err
+		}
 	}
 	if option.Ip != "" || option.Ipv6 != "" {
 		return errors.New("masque: without a WARP private-key the server assigns the addresses, remove ip and ipv6")

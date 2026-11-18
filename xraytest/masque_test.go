@@ -249,3 +249,61 @@ func TestMasqueH2(t *testing.T) {
 		require.Equal(t, 1, restarted.count("MASQUE: tunnel from"))
 	})
 }
+
+// TestMasqueFinalmask puts the layers of finalmask under the tunnel: the
+// quic-params of the QUIC connection, a UDP mask on HTTP/3 and a TCP mask on
+// HTTP/2.
+func TestMasqueFinalmask(t *testing.T) {
+	tg := startTargets(t).at(hostAddr(t))
+	mapping := func(port int, network string, finalmask obj) obj {
+		return obj{
+			"type": "masque", "port": port, "udp": true, "network": network,
+			"user": "user", "pass": "password",
+			"sni": "example.org", "skip-cert-verify": true, "finalmask": finalmask,
+		}
+	}
+
+	for name, params := range map[string]obj{
+		"bbr":          {"congestion": "bbr", "bbr-profile": "aggressive", "max-idle-timeout": 20, "keep-alive-period": 5},
+		"reno":         {"congestion": "reno", "init-stream-receive-window": 1 << 20},
+		"force-brutal": {"congestion": "force-brutal", "brutal-up": "20 mbps"},
+	} {
+		t.Run("quic-params-"+name, func(t *testing.T) {
+			port := freePort(t)
+			startXray(t, masqueInbound(port, "h3"))
+			proxy := newProxy(t, mapping(port, "h3", obj{"quic-params": params}))
+			checkTCP(t, proxy, tg)
+			checkUDP(t, proxy, tg)
+		})
+	}
+
+	t.Run("quic-params-brutal-rejected", func(t *testing.T) {
+		// only Hysteria negotiates brutal; Xray panics on it over HTTP/3
+		m := mapping(freePort(t), "h3", obj{"quic-params": obj{"congestion": "brutal", "brutal-up": "20 mbps"}})
+		m["name"], m["server"] = "xray", "127.0.0.1"
+		_, err := adapterParse(m)
+		require.ErrorContains(t, err, "brutal")
+	})
+
+	t.Run("h3-salamander", func(t *testing.T) {
+		salamander := fmMask("salamander", obj{"password": "obfs-password"})
+		port := freePort(t)
+		in := masqueInbound(port, "h3")
+		in["streamSettings"].(obj)["finalmask"] = obj{"udp": []obj{salamander}}
+		startXray(t, in)
+		proxy := newProxy(t, mapping(port, "h3", obj{"udp": []obj{salamander}}))
+		checkTCP(t, proxy, tg)
+		checkUDP(t, proxy, tg)
+		// without the mask the server does not see QUIC at all
+		fmCheckFails(t, newProxy(t, mapping(port, "h3", nil)), tg)
+	})
+
+	t.Run("h2-fragment", func(t *testing.T) {
+		port := freePort(t)
+		startXray(t, masqueInbound(port, "h2"))
+		fragment := fmMask("fragment", obj{"packets": "tlshello", "length": "20-40", "delay": "1-2"})
+		proxy := newProxy(t, mapping(port, "h2", obj{"tcp": []obj{fragment}}))
+		checkTCP(t, proxy, tg)
+		checkUDP(t, proxy, tg)
+	})
+}

@@ -22,6 +22,7 @@ import (
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/masque"
 	"github.com/metacubex/mihomo/transport/tuic/common"
 
@@ -288,11 +289,13 @@ func NewMasque(option MasqueOption) (*Masque, error) {
 
 func (w *Masque) dialQuic(ctx context.Context) (net.PacketConn, *quic.Conn, error) {
 	// without ConnectionIDLength set, backend occasionally throws PROTOCOL_VIOLATION and that closes our connection
-	pc, quicConn, err := common.DialQuic(ctx, w.addr, w.DialOptions(), w.dialer, w.tlsConfig, w.quicConfig, common.DialQuicOption{ConnectionIDLength: 20})
+	quicParams := finalmask.QuicParamsOf(w.dialer) // nil without finalmask.quic-params
+	pc, quicConn, err := common.DialQuic(ctx, w.addr, w.DialOptions(), w.dialer, w.tlsConfig, quicParams.HTTP3Config(w.quicConfig), common.DialQuicOption{ConnectionIDLength: 20})
 	if err != nil {
 		return nil, nil, err
 	}
 	common.SetCongestionController(quicConn, w.option.CongestionController, w.option.CWND, w.option.BBRProfile)
+	quicParams.ApplyCongestion(quicConn, w.option.CWND)
 	return pc, quicConn, nil
 }
 
