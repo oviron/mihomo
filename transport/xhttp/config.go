@@ -89,7 +89,7 @@ func (c *Config) EffectiveMode(hasReality bool) string {
 }
 
 func (c *Config) NormalizedPath() string {
-	path := c.Path
+	path, _ := splitPath(c.Path)
 	if path == "" {
 		path = "/"
 	}

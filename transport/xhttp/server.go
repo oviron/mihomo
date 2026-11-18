@@ -110,6 +110,7 @@ type requestHandler struct {
 }
 
 func NewServerHandler(opt ServerOption) (http.Handler, error) {
+	opt.Config.applyXrayDefaults()
 	xPaddingBytes, err := opt.Config.GetNormalizedXPaddingBytes()
 	if err != nil {
 		return nil, err
