@@ -171,9 +171,24 @@ func TestTransportMKCP(t *testing.T) {
 		},
 		{
 			name:   "vless",
-			gap:    "no kcp network for vless",
 			stream: `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]}`,
 			client: "network: kcp\n",
+		},
+		{
+			name:   "vless-seed-tuned",
+			stream: `"network":"kcp","kcpSettings":{"mtu":1200,"tti":20},"finalmask":{"udp":[{"type":"mkcp-legacy","settings":{"value":"secret"}}]}`,
+			client: "network: kcp\nmkcp-opts: {seed: secret, mtu: 1200, tti: 20}\n",
+		},
+		{
+			name:   "vless-tls",
+			stream: `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]},` + trTLSServer,
+			client: trTLSClient + "network: kcp\n",
+		},
+		{
+			name:     "trojan-tls",
+			protocol: "trojan",
+			stream:   `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]},` + trTLSServer,
+			client:   "type: trojan\npassword: %UUID%\nsni: example.org\nskip-cert-verify: true\nnetwork: kcp\n",
 		},
 	})
 }

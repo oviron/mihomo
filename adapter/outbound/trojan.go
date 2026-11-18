@@ -68,6 +68,7 @@ type TrojanOption struct {
 	GrpcOpts          GrpcOptions      `proxy:"grpc-opts,omitempty"`
 	WSOpts            WSOptions        `proxy:"ws-opts,omitempty"`
 	XHTTPOpts         XHTTPOptions     `proxy:"xhttp-opts,omitempty"`
+	MKCPOpts          MKCPOptions      `proxy:"mkcp-opts,omitempty"`
 	SSOpts            TrojanSSOption   `proxy:"ss-opts,omitempty"`
 	ClientFingerprint string           `proxy:"client-fingerprint,omitempty"`
 }
@@ -219,6 +220,8 @@ func (t *Trojan) dialContext(ctx context.Context) (c net.Conn, err error) {
 		return t.gunClient.Dial()
 	case "xhttp":
 		return t.xhttpClient.Dial(ctx)
+	case "mkcp", "kcp":
+		return dialMKCP(ctx, t.dialer, t.addr, t.option.MKCPOpts)
 	default:
 	}
 	return t.dialer.DialContext(ctx, "tcp", t.addr)
