@@ -371,3 +371,63 @@ func TestCombinedLayers(t *testing.T) {
 		require.NotEmpty(t, tap.seen(), "the traffic must have gone as DNS queries")
 	})
 }
+
+// TestCombinedChecks loads options whose parts do not go together: each must
+// be refused when the config is loaded, also where one part sits above another.
+func TestCombinedChecks(t *testing.T) {
+	udphop := fmMask("udphop", obj{"mode": "intervalLocal", "interval": 5, "remoteIPs": []string{"127.0.0.1"}, "remotePorts": "1000-1010"})
+	brutal := obj{"quic-params": obj{"congestion": "brutal", "brutal-up": "20 mbps"}}
+	legacy := obj{"udp": []obj{fmMask("mkcp-legacy", obj{"value": "seed"})}}
+	vless := func(extra obj) obj {
+		m := obj{"name": "p", "type": "vless", "server": "127.0.0.1", "port": 443, "uuid": userUUID}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	xhttp3 := obj{"tls": true, "alpn": []string{"h3"}, "network": "xhttp", "xhttp-opts": obj{"path": "/xh"}}
+	with := func(base obj, extra obj) obj {
+		m := obj{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	for name, c := range map[string]struct {
+		mapping obj
+		want    string
+	}{
+		// brutal is what Hysteria negotiates; XHTTP over HTTP/3 has no way to
+		"xhttp h3 brutal": {vless(with(xhttp3, obj{"finalmask": brutal})), "brutal"},
+		"vmess xhttp h3 brutal": {with(xhttp3, obj{
+			"name": "p", "type": "vmess", "server": "127.0.0.1", "port": 443, "uuid": userUUID, "cipher": "auto", "alterId": 0, "finalmask": brutal,
+		}), "brutal"},
+		"xhttp h3 brutal on the download leg": {vless(with(xhttp3, obj{
+			"xhttp-opts": obj{"path": "/xh", "download-settings": obj{"server": "127.0.0.2", "finalmask": brutal}},
+		})), "brutal"},
+		// the masks stay in sight under the transport of stream-settings
+		"kcp mkcp-legacy without raw": {vless(obj{"network": "kcp", "finalmask": legacy}), "raw"},
+		// VLESS, VMess and Trojan have a transport of their own
+		"vless with stream-settings": {vless(obj{"stream-settings": obj{"network": "ws"}}), "stream-settings"},
+		"trojan with stream-settings": {obj{
+			"name": "p", "type": "trojan", "server": "127.0.0.1", "port": 443, "password": "x", "stream-settings": obj{"tls": true},
+		}, "stream-settings"},
+		"hysteria2 ports with udphop, stream-settings above": {obj{
+			"name": "p", "type": "hysteria2", "server": "127.0.0.1", "port": 443, "password": "x", "ports": "1000-1010",
+			"finalmask": obj{"udp": []obj{udphop}}, "stream-settings": obj{"network": "raw"},
+		}, "ports"},
+		"masque brutal, stream-settings above": {obj{
+			"name": "p", "type": "masque", "server": "127.0.0.1", "port": 443, "user": "u", "pass": "p",
+			"finalmask": brutal, "stream-settings": obj{"network": "raw"},
+		}, "brutal"},
+	} {
+		proxy, err := adapterParse(c.mapping)
+		if proxy != nil {
+			_ = proxy.Close()
+		}
+		require.ErrorContains(t, err, c.want, name)
+	}
+}

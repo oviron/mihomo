@@ -183,6 +183,10 @@ func newXHTTPClient(t xhttpTransport) (*xhttp.Client, error) {
 		tlsConfig:   t.TLSConfig,
 	}
 
+	if err := finalmask.QuicParamsOf(upload.dialer).CheckHTTP3(upload.alpn); err != nil {
+		return nil, err
+	}
+
 	var reuseCfg *xhttp.ReuseConfig
 	if opts.ReuseSettings != nil {
 		reuseCfg, upload.keepAlive = opts.ReuseSettings.build()
@@ -239,6 +243,9 @@ func newXHTTPClient(t xhttpTransport) (*xhttp.Client, error) {
 		download.addr = net.JoinHostPort(download.server, strconv.Itoa(lo.FromPtrOr(ds.Port, t.Port)))
 		download.tls = lo.FromPtrOr(ds.TLS, t.TLS)
 		download.alpn = lo.FromPtrOr(ds.ALPN, t.ALPN)
+		if err = finalmask.QuicParamsOf(download.dialer).CheckHTTP3(download.alpn); err != nil {
+			return nil, fmt.Errorf("xhttp download-settings: %w", err)
+		}
 		download.tlsConfig.Host = lo.FromPtrOr(ds.ServerName, t.TLSConfig.Host)
 		download.tlsConfig.SkipCertVerify = lo.FromPtrOr(ds.SkipCertVerify, t.TLSConfig.SkipCertVerify)
 		download.tlsConfig.NameCertVerify = lo.FromPtrOr(ds.NameCertVerify, t.TLSConfig.NameCertVerify)

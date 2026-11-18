@@ -82,6 +82,15 @@ func (s *StreamSettings) wrap(inner C.Dialer, opts []dialer.Option) C.Dialer {
 	return d
 }
 
+// errStreamSettings is for the proxies that have transport options of their
+// own: a second transport under them is a stack no Xray-core inbound has.
+func errStreamSettings(b *BasicOption) error {
+	if b.StreamSettings != nil {
+		return errors.New("stream-settings is for proxies without transport options of their own, use network, tls and the options of the proxy")
+	}
+	return nil
+}
+
 type streamDialer struct {
 	C.Dialer    // the dialer under the transport, also the one for UDP
 	settings    *StreamSettings
@@ -94,6 +103,9 @@ type streamDialer struct {
 	gun   map[string]*gun.Client   // by server address
 	xhttp map[string]*xhttp.Client // by server address
 }
+
+// Upstream implements finalmask.Upper: the masks are under the transport.
+func (d *streamDialer) Upstream() C.Dialer { return d.Dialer }
 
 func (d *streamDialer) close() {
 	d.mu.Lock()

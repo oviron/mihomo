@@ -10,6 +10,7 @@ import (
 	"time"
 
 	N "github.com/metacubex/mihomo/common/net"
+	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/finalmask/mask"
 
 	"github.com/metacubex/quic-go"
@@ -297,6 +298,30 @@ func TestNoMasksIsTheInnerDialer(t *testing.T) {
 	require.NotNil(t, QuicParamsOf(dialer))
 	require.Nil(t, QuicParamsOf(plain{}))
 	require.Nil(t, ConfigOf(plain{}))
+}
+
+// upper is a dialer put above the masks, like the transport of
+// stream-settings.
+type upper struct {
+	C.Dialer
+}
+
+func (u upper) Upstream() C.Dialer { return u.Dialer }
+
+// What is asked about the masks of a dialer goes through the dialers above
+// them, and Raw drops those together with the masks.
+func TestThroughAnUpperDialer(t *testing.T) {
+	masked := NewDialer(plain{}, map[string]any{"udp": masks("test-a"), "quic-params": map[string]any{"congestion": "reno"}})
+	dialer := upper{upper{masked}}
+	require.Same(t, ConfigOf(masked), ConfigOf(dialer))
+	require.NotNil(t, QuicParamsOf(dialer))
+	require.Equal(t, plain{}, Raw(dialer))
+	require.Equal(t, plain{}, Raw(upper{plain{}}))
+	require.Nil(t, ConfigOf(upper{plain{}}))
+
+	own, err := DialerFor(dialer, nil)
+	require.NoError(t, err)
+	require.Equal(t, plain{}, own)
 }
 
 // A connection with a finalmask of its own gets those masks and not the

@@ -505,6 +505,9 @@ func parseVlessAddr(metadata *C.Metadata, xudp bool) *vless.DstAddr {
 }
 
 func NewVless(option VlessOption) (*Vless, error) {
+	if err := errStreamSettings(&option.BasicOption); err != nil {
+		return nil, err
+	}
 	var addons *vless.Addons
 	if len(option.Flow) >= 16 {
 		option.Flow = option.Flow[:16]
@@ -796,6 +799,10 @@ func NewVless(option VlessOption) (*Vless, error) {
 			downloadPort := lo.FromPtrOr(ds.Port, v.option.Port)
 			downloadTLS := lo.FromPtrOr(ds.TLS, v.option.TLS)
 			downloadALPN := lo.FromPtrOr(ds.ALPN, v.option.ALPN)
+			downloadQuicParams := finalmask.QuicParamsOf(downloadDialer) // of the download leg's own finalmask
+			if err := downloadQuicParams.CheckHTTP3(downloadALPN); err != nil {
+				return nil, fmt.Errorf("xhttp download-settings: %w", err)
+			}
 			downloadSkipCertVerify := lo.FromPtrOr(ds.SkipCertVerify, v.option.SkipCertVerify)
 			downloadNameCertVerify := lo.FromPtrOr(ds.NameCertVerify, v.option.NameCertVerify)
 			downloadFingerprint := lo.FromPtrOr(ds.Fingerprint, v.option.Fingerprint)
@@ -970,10 +977,11 @@ func NewVless(option VlessOption) (*Vless, error) {
 						if err != nil {
 							return nil, err
 						}
-						_, quicConn, err := common.DialQuic(ctx, downloadAddr, v.DialOptions(), downloadDialer, tlsConfig, cfg, common.DialQuicOption{Early: true})
+						_, quicConn, err := common.DialQuic(ctx, downloadAddr, v.DialOptions(), downloadDialer, tlsConfig, downloadQuicParams.HTTP3Config(cfg), common.DialQuicOption{Early: true})
 						if err != nil {
 							return nil, err
 						}
+						downloadQuicParams.ApplyCongestion(quicConn, 0)
 						return quicConn, nil
 					},
 					downloadALPN,

@@ -316,6 +316,9 @@ func (t *Trojan) Close() error {
 }
 
 func NewTrojan(option TrojanOption) (*Trojan, error) {
+	if err := errStreamSettings(&option.BasicOption); err != nil {
+		return nil, err
+	}
 	addr := net.JoinHostPort(option.Server, strconv.Itoa(option.Port))
 
 	sni := option.SNI // as configured: the transports with legs of their own fill it in per leg

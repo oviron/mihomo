@@ -500,6 +500,9 @@ func (v *Vmess) SupportUOT() bool {
 }
 
 func NewVmess(option VmessOption) (*Vmess, error) {
+	if err := errStreamSettings(&option.BasicOption); err != nil {
+		return nil, err
+	}
 	security := strings.ToLower(option.Cipher)
 	var options []vmess.ClientOption
 	if option.GlobalPadding {

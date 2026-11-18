@@ -36,22 +36,40 @@ func NewDialer(inner C.Dialer, raw map[string]any) C.Dialer {
 	return &Dialer{inner: inner, config: config, err: err}
 }
 
-// Raw returns the dialer without the masks, for connections that do not go to
-// the outbound's server.
-func Raw(dialer C.Dialer) C.Dialer {
-	if d, ok := dialer.(*Dialer); ok {
-		return d.inner
-	}
-	return dialer
+// Upper is a dialer that works over another one, such as a transport put
+// above the masks: what is asked about the masks of a dialer goes through it.
+type Upper interface {
+	Upstream() C.Dialer
 }
 
-// ConfigOf returns the finalmask of a dialer made by NewDialer, nil for any
-// other dialer or a broken option.
-func ConfigOf(dialer C.Dialer) *Config {
-	if d, ok := dialer.(*Dialer); ok {
-		return d.config
+// Raw returns the dialer without the masks, and without what was put above
+// them, for connections that do not go to the outbound's server.
+func Raw(dialer C.Dialer) C.Dialer {
+	for {
+		switch d := dialer.(type) {
+		case *Dialer:
+			return d.inner
+		case Upper:
+			dialer = d.Upstream()
+		default:
+			return dialer
+		}
 	}
-	return nil
+}
+
+// ConfigOf returns the finalmask of a dialer made by NewDialer, also under an
+// Upper one; nil for any other dialer or a broken option.
+func ConfigOf(dialer C.Dialer) *Config {
+	for {
+		switch d := dialer.(type) {
+		case *Dialer:
+			return d.config
+		case Upper:
+			dialer = d.Upstream()
+		default:
+			return nil
+		}
+	}
 }
 
 func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
