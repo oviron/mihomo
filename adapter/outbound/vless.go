@@ -54,6 +54,8 @@ type Vless struct {
 	restlsConfig    *restls.Config
 	jlsConfig       *jls.Config
 	realityConfig   *tlsC.RealityConfig
+
+	reverse *vlessReverse // the bridge of a reverse proxy, see vless_reverse.go
 }
 
 type VlessOption struct {
@@ -90,6 +92,8 @@ type VlessOption struct {
 	PrivateKey        string            `proxy:"private-key,omitempty"`
 	ServerName        string            `proxy:"servername,omitempty"`
 	ClientFingerprint string            `proxy:"client-fingerprint,omitempty"`
+
+	Reverse *VlessReverseOption `proxy:"reverse,omitempty"`
 }
 
 type XHTTPOptions struct {
@@ -297,7 +301,9 @@ func (v *Vless) streamConnContext(ctx context.Context, c net.Conn, metadata *C.M
 		}
 		conn, err = v.client.StreamConn(c, parseVlessAddr(metadata, v.option.XUDP))
 	} else {
-		conn, err = v.client.StreamConn(c, parseVlessAddr(metadata, false))
+		dst := parseVlessAddr(metadata, false)
+		dst.Reverse = v.option.Reverse != nil && metadata.Type == C.INNER && metadata.Host == vless.ReverseDestination
+		conn, err = v.client.StreamConn(c, dst)
 	}
 	if err != nil {
 		conn = nil
@@ -429,6 +435,9 @@ func (v *Vless) Close() error {
 		if err := v.xhttpClient.Close(); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	if v.reverse != nil {
+		v.reverse.close()
 	}
 	return errors.Join(errs...)
 }
@@ -917,6 +926,12 @@ func NewVless(option VlessOption) (*Vless, error) {
 
 		v.xhttpClient, err = xhttp.NewClient(cfg, makeTransport, makeDownloadTransport, v.realityConfig != nil)
 		if err != nil {
+			return nil, err
+		}
+	}
+
+	if option.Reverse != nil {
+		if v.reverse, err = newVlessReverse(v, *option.Reverse, option.NewTunnel()); err != nil {
 			return nil, err
 		}
 	}

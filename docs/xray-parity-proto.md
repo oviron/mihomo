@@ -155,3 +155,38 @@ resolves names through the tunnel, like Xray's `remoteDNS`.
 
 Not ported: Xray's `xmux` for MASQUE (several tunnels at once and their
 rotation). One outbound keeps one tunnel and sets it up again when it is lost.
+
+## Reverse proxy over VLESS
+
+### `reverse`
+
+```yaml
+- name: home
+  type: vless
+  # ... the account on the server has "reverse": {"tag": "..."}
+  reverse:
+    tag: from-server
+```
+
+The proxy becomes the bridge of an Xray reverse proxy. It is not used for
+outgoing connections; instead it keeps a connection to the server open (VLESS
+command 4), and the server, the portal, opens Mux.Cool sessions through it.
+Whatever the server routes to the outbound named by the account's
+`reverse.tag` comes out at this client and is handled like a connection from a
+listener named `tag`: rules can match it with `IN-NAME,from-server`. TCP and
+UDP both work; it also runs with `flow: xtls-rprx-vision`.
+
+The server asks for another connection when one carries more than 16 sessions
+and retires a connection after 256, as between two Xray instances.
+
+What to know before turning it on:
+
+- it lets the server open connections into this network, as far as the rules
+  allow. Write rules for `IN-NAME,<tag>`; without them such connections fall
+  through to the rules everything else uses;
+- the source address of these connections is always `192.0.2.1` (a reserved
+  documentation address), never the one the server reports: a reported address
+  could match rules meant for local devices and processes;
+- a proxy that comes from a provider (a subscription) cannot use `reverse`;
+- the proxy is for the bridge only. Xray rejects ordinary connections of an
+  account that has `reverse`.

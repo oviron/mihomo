@@ -23,13 +23,15 @@ const (
 	packetBuffer = 256
 )
 
-// Xray-core closes a carrier that had no session for this long.
-var idleInterval = 16 * time.Second
+const (
+	// Xray-core closes a carrier that had no session for this long.
+	defaultIdleInterval = 16 * time.Second
 
-// A frame that cannot be written for this long means a dead carrier. The peer
-// may stop reading for a while, when one of its sessions cannot get rid of
-// its data, but it does not for that long.
-var writeTimeout = 60 * time.Second
+	// A frame that cannot be written for this long means a dead carrier. The
+	// peer may stop reading for a while, when one of its sessions cannot get
+	// rid of its data, but it does not for that long.
+	defaultWriteTimeout = 60 * time.Second
+)
 
 var (
 	// ErrCarrierFull is returned when a carrier takes no more sessions.
@@ -51,8 +53,13 @@ type Limits struct {
 
 // Carrier runs Mux.Cool over one connection and opens sessions on it.
 type Carrier struct {
-	conn   net.Conn
-	limits Limits
+	conn    net.Conn
+	limits  Limits
+	handler Handler // takes the sessions the peer opens; nil for a client
+	reverse bool    // the peer is a reverse proxy portal
+
+	idleInterval time.Duration
+	writeTimeout time.Duration
 
 	writeMu sync.Mutex // one frame at a time
 
@@ -67,11 +74,17 @@ type Carrier struct {
 // NewCarrier starts Mux.Cool on conn, which must already be addressed to
 // Destination. The carrier owns conn and closes it.
 func NewCarrier(conn net.Conn, limits Limits) *Carrier {
+	return newCarrier(conn, limits, defaultIdleInterval, defaultWriteTimeout)
+}
+
+func newCarrier(conn net.Conn, limits Limits, idleInterval, writeTimeout time.Duration) *Carrier {
 	c := &Carrier{
-		conn:     conn,
-		limits:   limits,
-		sessions: make(map[uint16]*session),
-		done:     make(chan struct{}),
+		conn:         conn,
+		limits:       limits,
+		idleInterval: idleInterval,
+		writeTimeout: writeTimeout,
+		sessions:     make(map[uint16]*session),
+		done:         make(chan struct{}),
 	}
 	go c.readLoop()
 	go c.idleLoop()
@@ -141,6 +154,9 @@ func (c *Carrier) closeWithError(err error) {
 func (c *Carrier) open(network Network, destination M.Socksaddr, globalID [8]byte) (*session, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.handler != nil {
+		return nil, errors.New("muxcool: this side of the carrier accepts sessions, it does not open them")
+	}
 	if c.full() {
 		if c.err != nil {
 			return nil, c.err
@@ -186,9 +202,12 @@ func (c *Carrier) OpenPacket(destination M.Socksaddr, globalID [8]byte) (net.Pac
 	return &packetConn{session: s, deadline: deadline.MakePipeDeadline()}, nil
 }
 
-func (c *Carrier) remove(id uint16) {
+// remove forgets s, unless its ID belongs to another session by now.
+func (c *Carrier) remove(s *session) {
 	c.mu.Lock()
-	delete(c.sessions, id)
+	if c.sessions[s.id] == s {
+		delete(c.sessions, s.id)
+	}
 	c.mu.Unlock()
 }
 
@@ -210,8 +229,12 @@ func (c *Carrier) writeFrame(meta *Metadata, payload []byte) error {
 
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	_ = c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-	if _, err = c.conn.Write(b); err != nil {
+	// Cleared again after the write: on some transports an expired deadline
+	// closes the connection even when nothing is being written.
+	_ = c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
+	_, err = c.conn.Write(b)
+	_ = c.conn.SetWriteDeadline(time.Time{})
+	if err != nil {
 		c.closeWithError(err)
 	}
 	return err
@@ -228,7 +251,7 @@ func (c *Carrier) readLoop() {
 }
 
 func (c *Carrier) readFrame(reader *bufio.Reader) error {
-	meta, err := ReadMetadata(reader, false)
+	meta, err := ReadMetadata(reader, c.reverse)
 	if err != nil {
 		return err
 	}
@@ -243,13 +266,22 @@ func (c *Carrier) readFrame(reader *bufio.Reader) error {
 		}
 	}
 	var s *session
+	var accepted bool
 	switch meta.Status {
+	case StatusNew:
+		if c.handler != nil {
+			s = c.accept(&meta)
+			accepted = s != nil
+		}
 	case StatusKeep:
 		s = c.lookup(meta.SessionID)
 	case StatusEnd:
 		if s := c.lookup(meta.SessionID); s != nil {
 			s.end(meta.HasError())
 		}
+	}
+	if accepted {
+		defer c.serve(s, meta) // after the payload of the frame is in the session
 	}
 	if !meta.HasData() {
 		return nil
@@ -282,7 +314,7 @@ func (c *Carrier) readFrame(reader *bufio.Reader) error {
 // idleLoop closes a carrier that has no session and got none for a while,
 // the way Xray-core does.
 func (c *Carrier) idleLoop() {
-	ticker := time.NewTicker(idleInterval)
+	ticker := time.NewTicker(c.idleInterval)
 	defer ticker.Stop()
 	c.mu.Lock()
 	size, count := len(c.sessions), c.count
@@ -318,6 +350,7 @@ type session struct {
 	network     Network
 	destination M.Socksaddr
 	globalID    [8]byte
+	accepted    bool // opened by the peer
 
 	writeMu sync.Mutex  // one Write or WriteTo at a time
 	frameMu sync.Mutex  // one frame at a time; a Read may have to open the session
@@ -420,8 +453,11 @@ func (s *session) fail(err error) {
 
 // end handles the peer's end frame: the session is over in both directions.
 func (s *session) end(hasError bool) {
-	s.carrier.remove(s.id)
-	if hasError {
+	s.carrier.remove(s)
+	// An end frame closes a session in both directions. The side that opened
+	// it reads that as the end of the stream; the side that accepted it has a
+	// target to let go of, which a mere end of stream would keep half open.
+	if hasError || s.accepted {
 		s.fail(ErrSessionClosed)
 	} else {
 		s.fail(io.EOF)
@@ -524,7 +560,7 @@ func (s *session) source() M.Socksaddr {
 func (s *session) close() {
 	s.closeOnce.Do(func() {
 		close(s.closed)
-		s.carrier.remove(s.id)
+		s.carrier.remove(s)
 		s.fail(net.ErrClosed)
 
 		s.mu.Lock()

@@ -199,7 +199,7 @@ func (p *peer) seen() (news []Metadata, ends []uint16, largest int) {
 	return append([]Metadata(nil), p.news...), append([]uint16(nil), p.ends...), p.largest
 }
 
-func newCarrier(t *testing.T, limits Limits) (*Carrier, *peer) {
+func newTestCarrier(t *testing.T, limits Limits) (*Carrier, *peer) {
 	t.Helper()
 	local, remote := net.Pipe()
 	carrier := NewCarrier(local, limits)
@@ -227,7 +227,7 @@ func echo(t *testing.T, conn net.Conn, size int) {
 }
 
 func TestStream(t *testing.T) {
-	carrier, peer := newCarrier(t, Limits{})
+	carrier, peer := newTestCarrier(t, Limits{})
 	conn, err := carrier.OpenStream(socksaddr("example.org:443"))
 	require.NoError(t, err)
 	require.True(t, conn.(interface{ NeedHandshake() bool }).NeedHandshake())
@@ -264,7 +264,7 @@ func TestStream(t *testing.T) {
 
 // A session that is read before it is written opens without data.
 func TestStreamReadFirst(t *testing.T) {
-	carrier, peer := newCarrier(t, Limits{})
+	carrier, peer := newTestCarrier(t, Limits{})
 	conn, err := carrier.OpenStream(socksaddr("example.org:22"))
 	require.NoError(t, err)
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(50*time.Millisecond)))
@@ -281,7 +281,7 @@ func TestStreamReadFirst(t *testing.T) {
 }
 
 func TestStreamPeerEnd(t *testing.T) {
-	carrier, peer := newCarrier(t, Limits{})
+	carrier, peer := newTestCarrier(t, Limits{})
 	conn, err := carrier.OpenStream(socksaddr("example.org:443"))
 	require.NoError(t, err)
 	other, err := carrier.OpenStream(socksaddr("example.org:443"))
@@ -315,7 +315,7 @@ func TestStreamPeerEnd(t *testing.T) {
 // A session that is not read holds the carrier back instead of losing data
 // or buffering without bound.
 func TestStreamBackpressure(t *testing.T) {
-	carrier, _ := newCarrier(t, Limits{})
+	carrier, _ := newTestCarrier(t, Limits{})
 	slow, err := carrier.OpenStream(socksaddr("example.org:443"))
 	require.NoError(t, err)
 	data := make([]byte, 4*streamBuffer)
@@ -349,13 +349,9 @@ func TestStreamBackpressure(t *testing.T) {
 // Closing a session does not wait for a carrier that is stuck, and the
 // carrier gives up on a peer that reads nothing.
 func TestStuckCarrier(t *testing.T) {
-	old := writeTimeout
-	writeTimeout = 300 * time.Millisecond
-	defer func() { writeTimeout = old }()
-
 	local, remote := net.Pipe() // nobody reads remote
 	defer remote.Close()
-	carrier := NewCarrier(local, Limits{})
+	carrier := newCarrier(local, Limits{}, defaultIdleInterval, 300*time.Millisecond)
 	defer carrier.Close()
 	conn, err := carrier.OpenStream(socksaddr("example.org:443"))
 	require.NoError(t, err)
@@ -390,7 +386,7 @@ func TestStuckCarrier(t *testing.T) {
 
 // Empty frames carry nothing and must not pile up in a session.
 func TestStreamEmptyFrames(t *testing.T) {
-	carrier, peer := newCarrier(t, Limits{})
+	carrier, peer := newTestCarrier(t, Limits{})
 	conn, err := carrier.OpenStream(socksaddr("example.org:443"))
 	require.NoError(t, err)
 	echo(t, conn, 10)
@@ -408,7 +404,7 @@ func TestStreamEmptyFrames(t *testing.T) {
 func TestPacketReadersWake(t *testing.T) {
 	for _, end := range []string{"close", "peer end", "carrier"} {
 		t.Run(end, func(t *testing.T) {
-			carrier, peer := newCarrier(t, Limits{})
+			carrier, peer := newTestCarrier(t, Limits{})
 			pc, err := carrier.OpenPacket(socksaddr("9.9.9.9:53"), [8]byte{})
 			require.NoError(t, err)
 			_, err = pc.WriteTo([]byte("x"), net.UDPAddrFromAddrPort(netip.MustParseAddrPort("9.9.9.9:53")))
@@ -445,7 +441,7 @@ func TestPacketReadersWake(t *testing.T) {
 }
 
 func TestPacket(t *testing.T) {
-	carrier, peer := newCarrier(t, Limits{})
+	carrier, peer := newTestCarrier(t, Limits{})
 	globalID := [8]byte{8, 7, 6, 5, 4, 3, 2, 1}
 	pc, err := carrier.OpenPacket(socksaddr("9.9.9.9:53"), globalID)
 	require.NoError(t, err)
@@ -485,7 +481,7 @@ func TestPacket(t *testing.T) {
 }
 
 func TestCarrierLimitsAndClose(t *testing.T) {
-	carrier, _ := newCarrier(t, Limits{MaxConcurrency: 2, MaxSessions: 3})
+	carrier, _ := newTestCarrier(t, Limits{MaxConcurrency: 2, MaxSessions: 3})
 	first, err := carrier.OpenStream(socksaddr("example.org:1"))
 	require.NoError(t, err)
 	second, err := carrier.OpenStream(socksaddr("example.org:2"))
@@ -514,7 +510,7 @@ func TestCarrierLimitsAndClose(t *testing.T) {
 }
 
 func TestCarrierPeerGone(t *testing.T) {
-	carrier, peer := newCarrier(t, Limits{})
+	carrier, peer := newTestCarrier(t, Limits{})
 	conn, err := carrier.OpenStream(socksaddr("example.org:443"))
 	require.NoError(t, err)
 	echo(t, conn, 10)
@@ -605,11 +601,11 @@ func TestClientDialContext(t *testing.T) {
 }
 
 func TestCarrierIdle(t *testing.T) {
-	old := idleInterval
-	idleInterval = 20 * time.Millisecond
-	defer func() { idleInterval = old }()
-
-	carrier, _ := newCarrier(t, Limits{})
+	local, remote := net.Pipe()
+	carrier := newCarrier(local, Limits{}, 20*time.Millisecond, defaultWriteTimeout)
+	defer carrier.Close()
+	defer remote.Close()
+	newPeer(remote)
 	conn, err := carrier.OpenStream(socksaddr("example.org:443"))
 	require.NoError(t, err)
 	echo(t, conn, 10)
@@ -621,4 +617,35 @@ func TestCarrierIdle(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("an idle carrier must close")
 	}
+}
+
+// peerWriter speaks raw frames on a carrier connection.
+type peerWriter struct {
+	conn   net.Conn
+	reader *bufio.Reader
+}
+
+func newPeerWriter(conn net.Conn) *peerWriter {
+	return &peerWriter{conn: conn, reader: bufio.NewReader(conn)}
+}
+
+func (p *peerWriter) write(meta Metadata, payload []byte) {
+	b, _ := meta.Append(nil, len(payload))
+	_, _ = p.conn.Write(append(b, payload...))
+}
+
+func (p *peerWriter) read(t *testing.T) (Metadata, []byte) {
+	t.Helper()
+	_ = p.conn.SetReadDeadline(time.Now().Add(time.Second))
+	meta, err := ReadMetadata(p.reader, false)
+	require.NoError(t, err)
+	var payload []byte
+	if meta.HasData() {
+		n, err := ReadPayloadLen(p.reader)
+		require.NoError(t, err)
+		payload = make([]byte, n)
+		_, err = io.ReadFull(p.reader, payload)
+		require.NoError(t, err)
+	}
+	return meta, payload
 }
