@@ -17,7 +17,7 @@ func TestFingerprintList(t *testing.T) {
 
 	// the next certificate is pinned next to the current one, OpenSSL colons allowed
 	colons := strings.ToUpper(leaf[:2]) + ":" + leaf[2:]
-	for _, list := range []string{other + "," + leaf, leaf + ", " + other, " " + other + " ,\n" + colons + ","} {
+	for _, list := range []string{other + "," + leaf, leaf + ", " + other, " " + other + " ,\n" + colons + ",", leaf + ","} {
 		verifier, err := NewFingerprintVerifier(list, certTime)
 		require.NoError(t, err, list)
 		assert.NoError(t, verifier(chain, wrongLeafServerName), list)
@@ -58,4 +58,5 @@ func TestNameCertVerifierList(t *testing.T) {
 	assert.NoError(t, NewNameCertVerifier(leafServerName+", "+wrongLeafServerName, roots, certTime)(chain))
 	assert.Error(t, NewNameCertVerifier(wrongLeafServerName+","+wrongLeafServerName, roots, certTime)(chain))
 	assert.Error(t, NewNameCertVerifier(leafServerName+","+wrongLeafServerName, x509.NewCertPool(), certTime)(chain))
+	assert.NoError(t, NewNameCertVerifier(" "+leafServerName+" ,", roots, certTime)(chain))
 }

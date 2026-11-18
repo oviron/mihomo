@@ -45,12 +45,14 @@ func TestTransportREALITY(t *testing.T) {
 			stream: trRawServer(withOpt(`,"minClientVer":"26.3.27"`)),
 			client: trRealityClient,
 			gap:    "by design: the reported version stays 1.8.2 unless client-version is set",
+			gapErr: "x509: certificate signed by unknown authority",
 		},
 		{
 			name:   "max-client-ver",
 			stream: trRawServer(withOpt(`,"maxClientVer":"25.12.31"`)),
 			client: trRealityClient + "  client-version: 26.11.9\n",
 			gap:    "not a gap: the server refuses a newer client",
+			gapErr: "x509: certificate signed by unknown authority", // the fallback site answered
 		},
 		{
 			name:   "client-version-zero",
@@ -102,12 +104,14 @@ func TestTransportREALITY(t *testing.T) {
 				stream: trRawServer(withOpt(`,"mldsa65Seed":"%SEED%"`)),
 				client: trRealityClient + "  mldsa65-verify: " + otherVerify + "\n",
 				gap:    "not a gap: the signature is made with another key",
+				gapErr: "x509: certificate",
 			},
 			trCase{
 				name:   "mldsa65-verify-unsigned-server",
 				stream: trRawServer(trRealityServer),
 				client: trRealityClient + "  mldsa65-verify: %VERIFY%\n",
 				gap:    "not a gap: the server has no mldsa65Seed",
+				gapErr: "x509: certificate",
 			},
 		)
 	} else {
@@ -193,6 +197,7 @@ func TestTransportTLS(t *testing.T) {
 			stream: trRawServer(trTLSServer),
 			client: "tls: true\nservername: example.org\nfingerprint: \"0000000000000000000000000000000000000000000000000000000000000000,1111111111111111111111111111111111111111111111111111111111111111\"\n",
 			gap:    "not a gap: no pin of the list matches",
+			gapErr: "certificate fingerprints do not match",
 		},
 		{
 			name:   "ech-go-tls",
@@ -209,6 +214,7 @@ func TestTransportTLS(t *testing.T) {
 			stream: trRawServer(ech),
 			client: trTLSClient + "ech-opts: {enable: true, config: " + otherECH + "}\n",
 			gap:    "not a gap: proves the client really sends ECH",
+			gapErr: "failed to verify certificate",
 		},
 		{
 			name:   "session-resumption-server",

@@ -79,5 +79,8 @@ func (o RealityOptions) Parse() (*tlsC.RealityConfig, error) {
 
 		return config, nil
 	}
+	if o.Mldsa65Verify != "" {
+		return nil, errors.New("REALITY mldsa65-verify needs public-key")
+	}
 	return nil, nil
 }

@@ -10,6 +10,8 @@ import (
 func NewNameCertVerifier(dnsName string, roots *x509.CertPool, now func() time.Time) func([]*x509.Certificate) error {
 	if names := splitList(dnsName); len(names) > 1 {
 		return newNameListVerifier(names, roots, now)
+	} else if len(names) == 1 {
+		dnsName = names[0]
 	}
 	return func(certificates []*x509.Certificate) error {
 		if len(certificates) == 0 {

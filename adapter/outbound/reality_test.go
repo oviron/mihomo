@@ -27,6 +27,8 @@ func TestRealityOptions(t *testing.T) {
 	}
 
 	verify := base64.RawURLEncoding.EncodeToString(make([]byte, tlsC.MLDSA65PublicKeySize))
+	_, err = RealityOptions{Mldsa65Verify: verify}.Parse() // not silently without REALITY
+	require.Error(t, err)
 	config, err = RealityOptions{PublicKey: publicKey, Mldsa65Verify: verify}.Parse()
 	if tlsC.MLDSA65Supported {
 		require.NoError(t, err)

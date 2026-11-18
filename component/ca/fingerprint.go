@@ -14,6 +14,8 @@ import (
 func NewFingerprintVerifier(fingerprint string, time func() time.Time) (func(certs []*x509.Certificate, serverName string) error, error) {
 	if pins := splitList(fingerprint); len(pins) > 1 {
 		return newFingerprintListVerifier(pins, time)
+	} else if len(pins) == 1 {
+		fingerprint = pins[0]
 	}
 	switch fingerprint {
 	case "chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized": // WTF???

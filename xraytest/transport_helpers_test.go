@@ -201,6 +201,9 @@ type trCase struct {
 	// gap, when set, says why the pair is known not to work: the round trip
 	// must fail, and the case fails once it starts to pass.
 	gap string
+	// gapErr, when set, must be part of the error of a gap case, so that the
+	// case cannot pass on some unrelated failure.
+	gapErr string
 	// check replaces the default round trip.
 	check func(t *testing.T, x *xray, proxy C.Proxy, tg targets)
 }
@@ -336,6 +339,9 @@ func trRun(t *testing.T, cases []trCase) {
 			if c.gap != "" {
 				err = trRoundTrip(proxy, tg, 16, 5*time.Second)
 				require.Error(t, err, "works now, drop the gap mark: %s", c.gap)
+				if c.gapErr != "" {
+					require.ErrorContains(t, err, c.gapErr)
+				}
 				t.Logf("known gap (%s): %v", c.gap, err)
 				return
 			}
