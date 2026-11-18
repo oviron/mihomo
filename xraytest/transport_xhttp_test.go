@@ -238,3 +238,87 @@ xhttp-opts:
 		},
 	})
 }
+
+// XHTTP is a transport for any protocol in Xray-core, not for VLESS alone.
+func TestTransportXHTTPOtherProtocols(t *testing.T) {
+	h3 := strings.Replace(trTLSServer, "%TLS%", `,"alpn":["h3"]`, 1)
+	vmess := "type: vmess\nuuid: %UUID%\nalterId: 0\ncipher: auto\n"
+	trojan := "type: trojan\npassword: %UUID%\nsni: example.org\nskip-cert-verify: true\n"
+	trojanReality := "type: trojan\npassword: %UUID%\nsni: example.org\nclient-fingerprint: chrome\nreality-opts: {public-key: %PUB%, short-id: 0123456789abcdef, support-x25519mlkem768: true}\n"
+	var cases []trCase
+	for _, mode := range []string{"packet-up", "stream-up", "stream-one"} {
+		cases = append(cases,
+			trCase{
+				name:     "vmess-tls-" + mode,
+				protocol: "vmess",
+				stream:   trXHTTPServer(trTLSServer, ""),
+				client:   vmess + trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: " + mode + "}\n",
+			},
+			trCase{
+				name:     "trojan-tls-" + mode,
+				protocol: "trojan",
+				stream:   trXHTTPServer(trTLSServer, ""),
+				client:   trojan + "network: xhttp\nxhttp-opts: {path: /xh, mode: " + mode + "}\n",
+			},
+		)
+	}
+	cases = append(cases,
+		trCase{
+			name:     "vmess-plain",
+			protocol: "vmess",
+			stream:   trXHTTPServer("", ""),
+			client:   vmess + "network: xhttp\nxhttp-opts: {path: /xh}\n",
+		},
+		trCase{
+			name:     "vmess-reality",
+			protocol: "vmess",
+			stream:   trXHTTPServer(trRealityServer, ""),
+			client:   vmess + trRealityClient + "network: xhttp\nxhttp-opts: {path: /xh}\n",
+		},
+		trCase{
+			name:     "vmess-h3",
+			protocol: "vmess",
+			stream:   trXHTTPServer(h3, ""),
+			client:   vmess + trTLSClient + "alpn: [h3]\nnetwork: xhttp\nxhttp-opts: {path: /xh, mode: packet-up}\n",
+		},
+		trCase{
+			name:     "trojan-reality",
+			protocol: "trojan",
+			stream:   trXHTTPServer(trRealityServer, ""),
+			client:   trojanReality + "network: xhttp\nxhttp-opts: {path: /xh}\n",
+		},
+		trCase{
+			name:     "trojan-h3",
+			protocol: "trojan",
+			stream:   trXHTTPServer(h3, ""),
+			client:   trojan + "alpn: [h3]\nnetwork: xhttp\nxhttp-opts: {path: /xh, mode: stream-up}\n",
+		},
+		trCase{
+			name:     "trojan-obfs-xmux-pipeline-download",
+			protocol: "trojan",
+			stream:   trXHTTPServer(trTLSServer, `,"xPaddingObfsMode":true,"xPaddingPlacement":"cookie","sessionIDPlacement":"query","host":"cdn.example.org"`),
+			client: trojan + `network: xhttp
+xhttp-opts:
+  path: /xh
+  host: cdn.example.org
+  mode: packet-up
+  x-padding-obfs-mode: true
+  x-padding-placement: cookie
+  session-placement: query
+  pipeline-posts: true
+  xmux: {}
+  download-settings:
+    server: 127.0.0.1
+    port: %PORT%
+    xmux: {max-connections: "1"}
+`,
+		},
+		trCase{
+			name:     "vmess-reuse-settings-h1",
+			protocol: "vmess",
+			stream:   trXHTTPServer(trTLSServer, ""),
+			client:   vmess + trTLSClient + "alpn: [http/1.1]\nnetwork: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, reuse-settings: {max-connections: \"2\"}}\n",
+		},
+	)
+	trRun(t, cases)
+}

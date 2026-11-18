@@ -20,6 +20,7 @@ import (
 	"github.com/metacubex/mihomo/transport/shadowtls"
 	"github.com/metacubex/mihomo/transport/trojan"
 	"github.com/metacubex/mihomo/transport/vmess"
+	"github.com/metacubex/mihomo/transport/xhttp"
 
 	"github.com/metacubex/http"
 	"github.com/metacubex/tls"
@@ -32,6 +33,8 @@ type Trojan struct {
 
 	// for gun mux
 	gunClient *gun.Client
+	// for xhttp
+	xhttpClient *xhttp.Client
 
 	echConfig       *ech.Config
 	shadowTLSConfig *shadowtls.Config
@@ -64,6 +67,7 @@ type TrojanOption struct {
 	RealityOpts       RealityOptions   `proxy:"reality-opts,omitempty"`
 	GrpcOpts          GrpcOptions      `proxy:"grpc-opts,omitempty"`
 	WSOpts            WSOptions        `proxy:"ws-opts,omitempty"`
+	XHTTPOpts         XHTTPOptions     `proxy:"xhttp-opts,omitempty"`
 	SSOpts            TrojanSSOption   `proxy:"ss-opts,omitempty"`
 	ClientFingerprint string           `proxy:"client-fingerprint,omitempty"`
 }
@@ -147,6 +151,8 @@ func (t *Trojan) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.
 		c, err = vmess.StreamWebsocketConn(ctx, c, wsOpts)
 	case "grpc":
 		break // already handle in dialContext
+	case "xhttp":
+		break // already handle in dialContext
 	default:
 		// default tcp network
 		// handle TLS
@@ -211,6 +217,8 @@ func (t *Trojan) dialContext(ctx context.Context) (c net.Conn, err error) {
 	switch t.option.Network {
 	case "grpc": // gun transport
 		return t.gunClient.Dial()
+	case "xhttp":
+		return t.xhttpClient.Dial(ctx)
 	default:
 	}
 	return t.dialer.DialContext(ctx, "tcp", t.addr)
@@ -274,6 +282,11 @@ func (t *Trojan) Close() error {
 	var errs []error
 	if t.gunClient != nil {
 		if err := t.gunClient.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if t.xhttpClient != nil {
+		if err := t.xhttpClient.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -398,6 +411,26 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 			option.GrpcOpts.MinStreams,
 			option.GrpcOpts.MaxStreams,
 		)
+	}
+	if option.Network == "xhttp" {
+		t.xhttpClient, err = newXHTTPClient(xhttpTransport{
+			Base: t.Base, Dialer: t.dialer, Server: option.Server, Port: option.Port,
+			TLS: true, ALPN: option.ALPN, Options: &t.option.XHTTPOpts,
+			TLSConfig: vmess.TLSConfig{
+				Host:              option.SNI,
+				SkipCertVerify:    option.SkipCertVerify,
+				NameCertVerify:    option.NameCertVerify,
+				FingerPrint:       option.Fingerprint,
+				Certificate:       option.Certificate,
+				PrivateKey:        option.PrivateKey,
+				ClientFingerprint: option.ClientFingerprint,
+				ECH:               t.echConfig,
+				Reality:           t.realityConfig,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return t, nil

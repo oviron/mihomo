@@ -24,6 +24,7 @@ import (
 	"github.com/metacubex/mihomo/transport/restls"
 	"github.com/metacubex/mihomo/transport/shadowtls"
 	mihomoVMess "github.com/metacubex/mihomo/transport/vmess"
+	"github.com/metacubex/mihomo/transport/xhttp"
 
 	"github.com/metacubex/http"
 	vmess "github.com/metacubex/sing-vmess"
@@ -42,6 +43,7 @@ type Vmess struct {
 	// for gun mux
 	gunClient   *gun.Client
 	mekyaClient *mekya.Client
+	xhttpClient *xhttp.Client
 
 	echConfig       *ech.Config
 	shadowTLSConfig *shadowtls.Config
@@ -76,6 +78,7 @@ type VmessOption struct {
 	TLSMirrorOpts       TLSMirrorOptions `proxy:"tlsmirror-opts,omitempty"`
 	MekyaOpts           MekyaOptions     `proxy:"mekya-opts,omitempty"`
 	MKCPOpts            MKCPOptions      `proxy:"mkcp-opts,omitempty"`
+	XHTTPOpts           XHTTPOptions     `proxy:"xhttp-opts,omitempty"`
 	HTTPOpts            HTTPOptions      `proxy:"http-opts,omitempty"`
 	HTTP2Opts           HTTP2Options     `proxy:"h2-opts,omitempty"`
 	GrpcOpts            GrpcOptions      `proxy:"grpc-opts,omitempty"`
@@ -276,6 +279,8 @@ func (v *Vmess) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.M
 		break // already handle in dialContext
 	case "mekya":
 		break // already handle in dialContext
+	case "xhttp":
+		break // already handle in dialContext
 	default:
 		// default tcp network
 		// handle TLS
@@ -386,6 +391,8 @@ func (v *Vmess) dialContext(ctx context.Context) (c net.Conn, err error) {
 		return v.gunClient.Dial()
 	case "mekya":
 		return v.mekyaClient.Dial(ctx)
+	case "xhttp":
+		return v.xhttpClient.Dial(ctx)
 	case "mkcp", "kcp":
 		var raw net.Conn
 		raw, err = v.dialer.DialContext(ctx, "udp", v.addr)
@@ -462,6 +469,11 @@ func (v *Vmess) Close() error {
 	}
 	if v.mekyaClient != nil {
 		if err := v.mekyaClient.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if v.xhttpClient != nil {
+		if err := v.xhttpClient.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -650,6 +662,25 @@ func NewVmess(option VmessOption) (*Vmess, error) {
 			option.GrpcOpts.MinStreams,
 			option.GrpcOpts.MaxStreams,
 		)
+	case "xhttp":
+		v.xhttpClient, err = newXHTTPClient(xhttpTransport{
+			Base: v.Base, Dialer: v.dialer, Server: option.Server, Port: option.Port,
+			TLS: option.TLS, ALPN: option.ALPN, Options: &v.option.XHTTPOpts,
+			TLSConfig: mihomoVMess.TLSConfig{
+				Host:              option.ServerName,
+				SkipCertVerify:    option.SkipCertVerify,
+				NameCertVerify:    option.NameCertVerify,
+				FingerPrint:       option.Fingerprint,
+				Certificate:       option.Certificate,
+				PrivateKey:        option.PrivateKey,
+				ClientFingerprint: option.ClientFingerprint,
+				ECH:               v.echConfig,
+				Reality:           v.realityConfig,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return v, nil
