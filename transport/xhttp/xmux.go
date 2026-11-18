@@ -18,10 +18,13 @@ import (
 //   - hMaxRequestTimes counts HTTP requests, not dials, and a connection that
 //     ran out of them hands the following requests of a stream over to another
 //     one, which is what keeps a long packet-up upload under the request limit
-//     of a CDN or a web server;
+//     of a CDN or a web server. A connection serves exactly that many requests;
+//     Xray moves a stream on one request earlier or later depending on where
+//     in the stream the limit falls;
 //   - cMaxReuseTimes counts the first use of a connection too;
-//   - a connection past hMaxReusableSecs is not handed out any more, even
-//     while streams still run on it.
+//   - a connection that is used up, or past hMaxReusableSecs, leaves the pool
+//     at once and makes room for a new one, while the streams that still run
+//     on it keep it open.
 
 // applyXmuxDefaults mirrors SplitHTTPConfig.Build of Xray-core.
 func (c *ReuseConfig) applyXmuxDefaults() error {
@@ -35,8 +38,13 @@ func (c *ReuseConfig) applyXmuxDefaults() error {
 	if maxConcurrency.Max > 0 && maxConnections.Max > 0 {
 		return errors.New("max-connections cannot be specified together with max-concurrency")
 	}
-	if c.MaxConcurrency == "" && c.MaxConnections == "" && c.CMaxReuseTimes == "" &&
-		c.HMaxRequestTimes == "" && c.HMaxReusableSecs == "" {
+	cMaxReuseTimes, hMaxRequestTimes, hMaxReusableSecs, err := c.ResolveEntryConfig()
+	if err != nil {
+		return err
+	}
+	// Xray compares the parsed block with the zero one, so "0" is not set
+	if maxConcurrency.Max == 0 && maxConnections.Max == 0 && cMaxReuseTimes.Max == 0 &&
+		hMaxRequestTimes.Max == 0 && hMaxReusableSecs.Max == 0 && c.HKeepAlivePeriod == 0 {
 		c.MaxConnections = "3"
 		c.HMaxRequestTimes = "600-900"
 		c.HMaxReusableSecs = "1800-3000"
@@ -46,6 +54,31 @@ func (c *ReuseConfig) applyXmuxDefaults() error {
 
 func (entry *reuseEntry) expired(now time.Time) bool {
 	return !entry.unreusableAt.IsZero() && now.After(entry.unreusableAt)
+}
+
+// usedUp reports whether the entry takes no new stream and no new request.
+func (entry *reuseEntry) usedUp(now time.Time) bool {
+	return entry.leftRequests.Load() <= 0 || entry.expired(now) ||
+		(entry.maxReuseTimes > 0 && entry.reuseCount.Load() >= entry.maxReuseTimes)
+}
+
+// releaseEntry is reuseEntry.release under the lock of the pool, so that an
+// entry is not closed while GetTransport hands it to another stream.
+func (m *ReuseManager) releaseEntry(entry *reuseEntry) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry.release()
+}
+
+// acquireEntry takes a usage of a pooled entry for a stream that already runs.
+func (m *ReuseManager) acquireEntry() (*reuseEntry, error) {
+	m.mu.Lock()
+	closed := m.closed
+	m.mu.Unlock()
+	if closed {
+		return nil, io.ErrClosedPipe
+	}
+	return m.GetTransport().(*ReuseTransport).entry, nil
 }
 
 // xmuxHeld is a pooled connection a stream holds: the current one, or an
@@ -77,10 +110,24 @@ func (x *xmuxState) acquire() (*xmuxHeld, error) {
 		return nil, io.ErrClosedPipe
 	}
 	current := x.held[len(x.held)-1]
-	if current.entry.leftRequests.Add(-1) < 0 || current.entry.expired(time.Now()) || current.entry.isClosed() {
-		// GetTransport takes a usage of the entry it returns, which x keeps
-		next := &xmuxHeld{entry: x.manager.GetTransport().(*ReuseTransport).entry}
-		next.entry.leftRequests.Add(-1)
+	// Other streams take requests of the same entries, so a fresh one may be
+	// used up before this request gets to it: try again, a few times.
+	for attempt := 0; ; attempt++ {
+		entry := current.entry
+		if entry.leftRequests.Add(-1) >= 0 && !entry.expired(time.Now()) && !entry.isClosed() {
+			break
+		}
+		if attempt == 8 {
+			if entry.isClosed() {
+				return nil, io.ErrClosedPipe
+			}
+			break
+		}
+		nextEntry, err := x.manager.acquireEntry()
+		if err != nil {
+			return nil, err
+		}
+		next := &xmuxHeld{entry: nextEntry}
 		x.held = append(x.held, next)
 		if current.inflight == 0 {
 			x.dropLocked(current)
@@ -106,7 +153,7 @@ func (x *xmuxState) dropLocked(held *xmuxHeld) {
 	for i, h := range x.held {
 		if h == held {
 			x.held = append(x.held[:i], x.held[i+1:]...)
-			held.entry.release()
+			x.manager.releaseEntry(held.entry)
 			return
 		}
 	}
@@ -120,7 +167,7 @@ func (x *xmuxState) close() {
 	}
 	x.closed = true
 	for _, held := range x.held {
-		held.entry.release()
+		x.manager.releaseEntry(held.entry)
 	}
 }
 

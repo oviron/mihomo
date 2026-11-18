@@ -68,6 +68,7 @@ type ReuseManager struct {
 	hMaxReusableSecs Range
 	maker            TransportMaker
 	xray             bool // the semantics of Xray, see xmux.go
+	closed           bool
 	mu               sync.Mutex
 	entries          []*reuseEntry
 }
@@ -110,6 +111,7 @@ func (m *ReuseManager) Close() error {
 		entry.close()
 	}
 	m.entries = nil
+	m.closed = true
 	return nil
 }
 
@@ -117,6 +119,12 @@ func (m *ReuseManager) cleanupLocked(now time.Time) {
 	kept := m.entries[:0]
 	for _, entry := range m.entries {
 		if entry.isClosed() {
+			continue
+		}
+		if m.xray && entry.usedUp(now) { // leaves the pool at once, see xmux.go
+			if entry.openUsage.Load() == 0 {
+				entry.close()
+			}
 			continue
 		}
 		if entry.leftRequests.Load() <= 0 && entry.openUsage.Load() == 0 {
@@ -203,6 +211,9 @@ func (m *ReuseManager) newEntryLocked(transport http.RoundTripper, now time.Time
 	}
 	if m.xray {
 		entry.reuseCount.Store(1) // the first use counts
+		if entry.leftRequests.Load() <= 0 {
+			entry.leftRequests.Store(1<<30 - 1) // a range from 0 can pick "no limit"
+		}
 	}
 
 	m.entries = append(m.entries, entry)

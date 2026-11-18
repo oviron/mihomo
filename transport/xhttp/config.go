@@ -69,6 +69,8 @@ type ReuseConfig struct {
 
 	// XraySemantics reads the settings the way Xray-core reads xmux, see xmux.go.
 	XraySemantics bool
+	// HKeepAlivePeriod is only looked at to tell an empty xmux block.
+	HKeepAlivePeriod int
 }
 
 func (c *Config) NormalizedMode() string {

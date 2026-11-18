@@ -28,7 +28,7 @@ func TestXHTTPXmuxOption(t *testing.T) {
 	})
 	require.NotNil(t, option.XHTTPOpts.Xmux)
 	cfg, keepAlive := option.XHTTPOpts.Xmux.build()
-	require.Equal(t, &xhttp.ReuseConfig{MaxConnections: "2", HMaxRequestTimes: "600-900", XraySemantics: true}, cfg)
+	require.Equal(t, &xhttp.ReuseConfig{MaxConnections: "2", HMaxRequestTimes: "600-900", XraySemantics: true, HKeepAlivePeriod: 30}, cfg)
 	require.Equal(t, 30*time.Second, keepAlive)
 
 	_, err := NewVless(option)
@@ -49,6 +49,7 @@ func TestXHTTPDownloadOptions(t *testing.T) {
 				"x-padding-bytes":   "10-20",
 				"session-placement": "query",
 				"session-key":       "s",
+				"seq-placement":     "path",
 				"xmux":              map[string]any{},
 			},
 		},
@@ -57,12 +58,13 @@ func TestXHTTPDownloadOptions(t *testing.T) {
 	require.NotNil(t, ds)
 	require.NotNil(t, ds.Xmux)
 
-	cfg := xhttp.Config{XPaddingObfsMode: true, XPaddingKey: "up", XPaddingHeader: "H", SessionPlacement: "header"}
+	cfg := xhttp.Config{XPaddingObfsMode: true, XPaddingKey: "up", XPaddingHeader: "H", SessionPlacement: "header", SeqPlacement: "header"}
 	ds.XHTTPDownloadXHTTPOptions.apply(&cfg)
 	require.Equal(t, xhttp.Config{
 		XPaddingObfsMode: true, XPaddingKey: "down", XPaddingHeader: "H", XPaddingBytes: "10-20",
-		SessionPlacement: "query", SessionKey: "s",
+		SessionPlacement: "query", SessionKey: "s", SeqPlacement: "path",
 	}, cfg)
+	require.Equal(t, "/", cfg.NormalizedPath()) // the download path ends in "/" again
 
 	_, err := NewVless(option)
 	require.NoError(t, err)

@@ -3,6 +3,7 @@ package xhttp
 import (
 	"io"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -53,6 +54,14 @@ func TestXmuxDefaults(t *testing.T) {
 	cfg = &ReuseConfig{XraySemantics: true, MaxConcurrency: "16-32"}
 	require.NoError(t, cfg.applyXmuxDefaults())
 	assert.Equal(t, ReuseConfig{MaxConcurrency: "16-32", XraySemantics: true}, *cfg)
+
+	// "0" is as good as unset, a keep-alive period alone is a setting
+	cfg = &ReuseConfig{XraySemantics: true, MaxConnections: "0"}
+	require.NoError(t, cfg.applyXmuxDefaults())
+	assert.Equal(t, "3", cfg.MaxConnections)
+	cfg = &ReuseConfig{XraySemantics: true, HKeepAlivePeriod: -1}
+	require.NoError(t, cfg.applyXmuxDefaults())
+	assert.Equal(t, ReuseConfig{XraySemantics: true, HKeepAlivePeriod: -1}, *cfg)
 
 	cfg = &ReuseConfig{} // reuse-settings: nothing is filled in
 	require.NoError(t, cfg.applyXmuxDefaults())
@@ -144,4 +153,86 @@ func TestDownloadPoolAlone(t *testing.T) {
 	_, download, err := client.getTransport()
 	require.NoError(t, err)
 	assert.IsType(t, &ReuseTransport{}, download)
+}
+
+// A connection that takes no new stream makes room in max-connections at once.
+func TestXmuxUsedUpLeavesPool(t *testing.T) {
+	manager, made := xmuxTestManager(t, ReuseConfig{MaxConnections: "2", HMaxReusableSecs: "1000"})
+	first := manager.GetTransport()
+	second := manager.GetTransport()
+	assert.Equal(t, []int64{1, 2}, []int64{xmuxServedBy(first), xmuxServedBy(second)})
+
+	first.(*ReuseTransport).entry.unreusableAt = time.Now().Add(-time.Second)
+	third := manager.GetTransport()
+	assert.Equal(t, int64(3), xmuxServedBy(third), "the expired connection still counted")
+	assert.False(t, (*made)[0].closed.Load())
+	require.NoError(t, first.(*ReuseTransport).Close())
+	assert.True(t, (*made)[0].closed.Load())
+}
+
+// A stream that outlives the pool does not fill it again.
+func TestXmuxClosedPool(t *testing.T) {
+	manager, made := xmuxTestManager(t, ReuseConfig{MaxConnections: "1", HMaxRequestTimes: "1"})
+	rt := manager.GetTransport()
+	_, err := rt.RoundTrip(&http.Request{})
+	require.NoError(t, err)
+	require.NoError(t, manager.Close())
+	_, err = rt.RoundTrip(&http.Request{})
+	assert.Error(t, err)
+	assert.Len(t, *made, 1)
+}
+
+// xmuxCountingTransport fails the test when it is used after Close or for
+// more requests than the limit.
+type xmuxCountingTransport struct {
+	t        *testing.T
+	limit    int32
+	requests atomic.Int32
+	closed   atomic.Bool
+}
+
+func (c *xmuxCountingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if c.closed.Load() {
+		c.t.Error("request on a closed connection")
+	}
+	if n := c.requests.Add(1); n > c.limit {
+		c.t.Errorf("%d requests on a connection limited to %d", n, c.limit)
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+func (c *xmuxCountingTransport) Close() error {
+	c.closed.Store(true)
+	return nil
+}
+
+// Streams that come, send and go at the same time never exceed the request
+// limit of a connection and never meet a closed one.
+func TestXmuxConcurrentStreams(t *testing.T) {
+	const limit = 7
+	manager, err := NewReuseManager(&ReuseConfig{XraySemantics: true, MaxConnections: "3", HMaxRequestTimes: "7", CMaxReuseTimes: "4"},
+		func() http.RoundTripper { return &xmuxCountingTransport{t: t, limit: limit} })
+	require.NoError(t, err)
+	defer manager.Close()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for stream := 0; stream < 50; stream++ {
+				rt := manager.GetTransport()
+				for request := 0; request < 5; request++ {
+					resp, err := rt.RoundTrip(&http.Request{})
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					_ = resp.Body.Close()
+				}
+				_ = rt.(*ReuseTransport).Close()
+			}
+		}()
+	}
+	wg.Wait()
 }
