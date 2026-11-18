@@ -1150,11 +1150,16 @@ func TestStalledResolver(t *testing.T) {
 			return server.tcpConns
 		}
 		eventually(t, func() bool { return connections() >= 5 }, "the connection is replaced after a write that timed out")
+		// 2000 bytes per connection are 11 queries of 172 bytes and a part;
+		// the server may still be reading what the first connections carried
+		eventually(t, func() bool {
+			server.mu.Lock()
+			defer server.mu.Unlock()
+			return len(server.queries) >= 4*11
+		}, "the queries of the replaced connections arrive whole")
 		server.mu.Lock()
 		defer server.mu.Unlock()
 		require.Zero(t, server.badFrames)
-		// 2000 bytes per connection are 11 queries of 172 bytes and a part
-		require.GreaterOrEqual(t, len(server.queries), 4*11)
 		require.LessOrEqual(t, len(server.queries), server.tcpConns*11)
 	})
 
