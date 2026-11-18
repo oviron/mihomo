@@ -48,6 +48,8 @@ type Masque struct {
 	runDevice atomic.Bool
 
 	option MasqueOption
+
+	standard *masqueStandard // nil for WARP
 }
 
 type MasqueOption struct {
@@ -55,8 +57,8 @@ type MasqueOption struct {
 	Name             string `proxy:"name"`
 	Server           string `proxy:"server"`
 	Port             int    `proxy:"port"`
-	PrivateKey       string `proxy:"private-key"`
-	PublicKey        string `proxy:"public-key"`
+	PrivateKey       string `proxy:"private-key,omitempty"`
+	PublicKey        string `proxy:"public-key,omitempty"`
 	Ip               string `proxy:"ip,omitempty"`
 	Ipv6             string `proxy:"ipv6,omitempty"`
 	URI              string `proxy:"uri,omitempty"`
@@ -76,6 +78,13 @@ type MasqueOption struct {
 
 	RemoteDnsResolve bool     `proxy:"remote-dns-resolve,omitempty"`
 	Dns              []string `proxy:"dns,omitempty"`
+
+	// without private-key: a standard CONNECT-IP server, see masque_std.go
+	User    string            `proxy:"user,omitempty"`
+	Pass    string            `proxy:"pass,omitempty"`
+	Host    string            `proxy:"host,omitempty"`
+	Path    string            `proxy:"path,omitempty"`
+	Headers map[string]string `proxy:"headers,omitempty"`
 }
 
 func (option MasqueOption) Prefixes() ([]netip.Prefix, error) {
@@ -132,6 +141,13 @@ func NewMasque(option MasqueOption) (*Masque, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	outbound.runCtx = ctx
 	outbound.runCancel = cancel
+
+	if option.PrivateKey == "" && option.PublicKey == "" {
+		if err := outbound.initStandard(option); err != nil {
+			return nil, err
+		}
+		return outbound, nil
+	}
 
 	privKeyB64, err := base64.StdEncoding.DecodeString(option.PrivateKey)
 	if err != nil {
@@ -331,6 +347,9 @@ func (w *Masque) run(ctx context.Context) error {
 }
 
 func (w *Masque) startLocked(ctx context.Context) error {
+	if w.standard != nil {
+		return w.startStandard(ctx)
+	}
 	if !w.runDevice.Load() {
 		err := w.tunDevice.Start()
 		if err != nil {

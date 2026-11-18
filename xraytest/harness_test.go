@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -70,7 +71,8 @@ func (b *syncBuffer) String() string {
 
 // xray is a running Xray-core process.
 type xray struct {
-	log *syncBuffer
+	log  *syncBuffer
+	stop func() // ends the process the way a service manager does
 }
 
 // count returns how many times the debug log contains substr.
@@ -143,6 +145,15 @@ func startXrayConfig(t *testing.T, cfg obj) *xray {
 		_ = cmd.Wait()
 		close(exited)
 	}()
+	x.stop = func() {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-exited:
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+			<-exited
+		}
+	}
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		<-exited

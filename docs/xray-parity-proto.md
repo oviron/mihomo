@@ -96,3 +96,36 @@ Mux.Cool has no flow control. A session that is not read holds back the other
 sessions of its connection; a connection whose peer reads nothing for a minute
 is dropped. A half-closed stream ends the session in both directions, as it
 does between two Xray instances.
+
+## MASQUE
+
+### Standard CONNECT-IP (`type: masque` without WARP keys)
+
+```yaml
+- name: masque
+  type: masque
+  server: example.org
+  port: 443
+  user: alice               # the "email" of the Xray client
+  pass: secret
+  udp: true
+  # sni: example.org
+  # skip-cert-verify: false
+  # host: example.org       # authority of the request, default: sni (and the port if it is not 443)
+  # path: /.well-known/masque/ip/*/*/
+  # headers: {}
+  # mtu: 1280
+```
+
+Without `private-key` and `public-key` the `masque` outbound is no longer a
+Cloudflare WARP client but a standard MASQUE client (RFC 9484): an extended
+CONNECT with the `connect-ip` protocol over HTTP/3, HTTP Basic authentication,
+tunnel addresses assigned by the server. That is the `masque` inbound of
+Xray-core; `user`, `pass`, `host`, `path` and `headers` are the keys of its
+client. `ip` and `ipv6` are not used: the server hands out new addresses on
+every connection and the outbound rebuilds its IP stack on them. When the
+tunnel is lost, the next connection sets it up again.
+
+On the wire it is HTTP/3 to a web server with a real certificate, and carries
+IP packets: TCP and UDP both work, UDP without a full cone guarantee (the
+server opens a socket per flow).
