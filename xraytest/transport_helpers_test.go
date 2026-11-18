@@ -243,6 +243,12 @@ func trInbound(t *testing.T, protocol, stream string, port int) obj {
 		settings = obj{"clients": []obj{{"password": userUUID}}}
 	case "hysteria":
 		settings = obj{"version": 2, "clients": []obj{{"auth": userUUID}}}
+	case "shadowsocks":
+		settings = obj{"method": "aes-128-gcm", "password": userUUID, "network": "tcp"}
+	case "socks":
+		settings = obj{"auth": "noauth"}
+	case "http":
+		settings = obj{}
 	}
 	var streamSettings obj
 	require.NoError(t, json.Unmarshal([]byte("{"+stream+"}"), &streamSettings), stream)
