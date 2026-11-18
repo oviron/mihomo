@@ -21,6 +21,7 @@ package finalmask
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/metacubex/mihomo/transport/finalmask/mask"
@@ -33,6 +34,9 @@ type Config struct {
 	tcp     []mask.TCPMask
 	udp     []mask.UDPMask
 	carrier mask.UDPCarrier
+
+	// directOnly tells that the carrier opens sockets of its own kind.
+	directOnly bool
 
 	// MKCPLegacy tells that the UDP list has a mkcp-legacy mask.
 	MKCPLegacy bool
@@ -62,8 +66,20 @@ func ValidateProxy(mapping map[string]any) error {
 		if !ok {
 			return fmt.Errorf("finalmask: expected a map, got %T", raw)
 		}
-		if _, err := Parse(option); err != nil {
+		config, err := Parse(option)
+		if err != nil {
 			return err
+		}
+		if config.directOnly {
+			// the names as the proxy decoder matches them
+			for name, value := range mapping {
+				switch strings.ToLower(strings.ReplaceAll(name, "_", "-")) {
+				case "dialer-proxy", "interface-name", "routing-mark":
+					if value != nil && !reflect.ValueOf(value).IsZero() {
+						return fmt.Errorf("finalmask: the last udp mask opens sockets of its own kind and can't be used with %s", name)
+					}
+				}
+			}
 		}
 	}
 	return nil
@@ -106,6 +122,7 @@ func Parse(raw map[string]any) (*Config, error) {
 				return nil, fmt.Errorf("finalmask: udp[%d] %s opens the socket itself and must be the last mask of the list", i, name)
 			}
 			config.carrier = carrier
+			_, config.directOnly = m.(mask.DirectOnly)
 			continue
 		}
 		config.udp = append(config.udp, m)

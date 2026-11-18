@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
 )
@@ -127,6 +128,9 @@ func (d *Dialer) listenPacket(ctx context.Context, network, address string, dest
 	if d.config.carrier != nil {
 		if !serverAddr.IsValid() {
 			return nil, fmt.Errorf("finalmask: the last udp mask needs the server address, which this outbound does not give when it opens the socket")
+		}
+		if _, system := d.inner.(dialer.Dialer); d.config.directOnly && !system {
+			return nil, fmt.Errorf("finalmask: the last udp mask opens sockets of its own kind and can't go through another proxy")
 		}
 		pc, err = d.config.carrier.DialPacketConn(ctx, d.inner, serverAddr)
 		if err != nil {

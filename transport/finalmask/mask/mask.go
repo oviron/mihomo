@@ -44,6 +44,14 @@ type UDPCarrier interface {
 	DialPacketConn(ctx context.Context, dialer Dialer, dest netip.AddrPort) (net.PacketConn, error)
 }
 
+// DirectOnly is implemented by a carrier that does not open its sockets with
+// the Dialer it is given, because they are not UDP sockets. Such a mask can't
+// go through another proxy, and of the proxy's own socket options only the
+// global ones reach it.
+type DirectOnly interface {
+	DirectOnly()
+}
+
 // TCPBuilder makes a TCP mask from its settings.
 type TCPBuilder func(settings map[string]any) (TCPMask, error)
 
