@@ -46,6 +46,7 @@ type Conn struct {
 	writeFilterApplicationData bool
 	writeDirect                bool
 	writeOnceUserUUID          []byte
+	testseed                   *Testseed
 }
 
 func (vc *Conn) Read(b []byte) (int, error) {
@@ -194,6 +195,9 @@ func (vc *Conn) Write(p []byte) (int, error) {
 }
 
 func (vc *Conn) WriteBuffer(buffer *buf.Buffer) (err error) {
+	if vc.writeFilterApplicationData && vc.testseed != nil {
+		return vc.writeBufferWithTestseed(buffer)
+	}
 	if vc.writeFilterApplicationData {
 		if buffer.IsEmpty() {
 			ApplyPadding(buffer, commandPaddingContinue, &vc.writeOnceUserUUID, true) // we do a long padding to hide vless header
@@ -256,6 +260,9 @@ func (vc *Conn) FrontHeadroom() int {
 
 func (vc *Conn) RearHeadroom() int {
 	rearHeadroom := 500 + 900
+	if vc.testseed != nil {
+		rearHeadroom = vc.testseed.maxPadding()
+	}
 	if vc.writeFilterApplicationData { // The writer may be replaced, add the required value for vc.netConn
 		if abs := N.CalculateRearHeadroom(vc.netConn) - N.CalculateRearHeadroom(vc.Conn); abs > 0 {
 			rearHeadroom += abs
