@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/transport/finalmask/mask"
 )
 
@@ -32,7 +33,8 @@ type Options struct {
 	// 0 sends it once per address.
 	Reset mask.Range `mask:"reset,omitempty"`
 	Noise []Item     `mask:"noise,omitempty"`
-	// Script is the path of a Lua script that builds the noise.
+	// Script is the path of a Lua file that builds the noise, see lua.go.
+	// A relative path is taken from the home directory.
 	Script string `mask:"script,omitempty"`
 }
 
@@ -83,8 +85,7 @@ type Mask struct {
 	script scriptSource
 }
 
-// scriptSource builds the noise with a script. It is nil unless the package
-// is built with the script engine.
+// scriptSource builds the noise with a script, see lua.go.
 type scriptSource interface {
 	packets(addr string) ([]scriptPacket, error)
 }
@@ -94,7 +95,7 @@ type scriptPacket struct {
 	delay  time.Duration
 }
 
-// loadScript is set by the script engine, if there is one.
+// loadScript is set by the script engine.
 var loadScript func(path string) (scriptSource, error)
 
 // New builds the mask from its settings.
@@ -287,6 +288,7 @@ func (c *Conn) sendNoise(addr net.Addr, key string) {
 	if c.mask.script != nil {
 		packets, err := c.mask.script.packets(key)
 		if err != nil {
+			log.Warnln("[finalmask] the noise script produced no packets: %v", err)
 			return
 		}
 		for _, packet := range packets {
