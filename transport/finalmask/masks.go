@@ -9,4 +9,5 @@ import (
 	_ "github.com/metacubex/mihomo/transport/finalmask/salamander"
 	_ "github.com/metacubex/mihomo/transport/finalmask/udphop"
 	_ "github.com/metacubex/mihomo/transport/finalmask/xicmp"
+	_ "github.com/metacubex/mihomo/transport/finalmask/xmc"
 )
