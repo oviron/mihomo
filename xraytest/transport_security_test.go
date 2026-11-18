@@ -66,7 +66,7 @@ func TestTransportREALITY(t *testing.T) {
 			client: trRealityClient + "flow: xtls-rprx-vision\n",
 		},
 	}
-	for _, name := range []string{"chrome155", "firefox", "safari"} {
+	for _, name := range []string{"chrome155", "firefox", "safari", "random"} {
 		cases = append(cases, trCase{
 			name:   "fingerprint-" + name,
 			stream: trRawServer(trRealityServer),
