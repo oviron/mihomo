@@ -51,6 +51,23 @@ func TestFinalmaskFragment(t *testing.T) {
 		}
 	})
 
+	// With TCP Fast Open the connection would only be made by the first
+	// write; the masks get a connected one.
+	t.Run("tfo", func(t *testing.T) {
+		port := freePort(t)
+		startXray(t, fmInbound("vless", port, fmVlessSettings(""), obj{
+			"network": "raw", "security": "tls", "tlsSettings": tlsSettings(),
+		}))
+		tap := fmStartTap(t, port)
+		proxy := fmProxy(t, obj{
+			"type": "vless", "port": tap.port, "uuid": userUUID, "tfo": true,
+			"tls": true, "skip-cert-verify": true, "servername": "example.org",
+			"finalmask": obj{"tcp": []obj{fmMask("fragment", obj{"packets": "tlshello", "length": "20-40", "delay": "1-3"})}},
+		})
+		checkTCP(t, proxy, tg)
+		require.GreaterOrEqual(t, len(tap.handshakeRecords()), 4)
+	})
+
 	// The names Xray uses in JSON are accepted as they are.
 	t.Run("tlshello-merged-xray-names", func(t *testing.T) {
 		port := freePort(t)

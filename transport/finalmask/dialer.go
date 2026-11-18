@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	N "github.com/metacubex/mihomo/common/net"
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
@@ -60,6 +61,15 @@ func (d *Dialer) DialContext(ctx context.Context, network, address string) (net.
 	conn, err := d.inner.DialContext(ctx, network, address)
 	if err != nil {
 		return nil, err
+	}
+	if len(d.config.tcp) > 0 && N.NeedHandshake(conn) {
+		// With TCP Fast Open the connection is only made by its first write:
+		// until then it has no addresses and drops the deadlines it is given,
+		// both of which masks rely on. Make it now, without data.
+		if _, err := conn.Write(nil); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
 	}
 	for _, m := range d.config.tcp {
 		wrapped, err := m.WrapConn(conn)

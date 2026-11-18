@@ -2,12 +2,14 @@ package finalmask
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"reflect"
 	"testing"
 	"time"
 
+	N "github.com/metacubex/mihomo/common/net"
 	"github.com/metacubex/mihomo/transport/finalmask/mask"
 
 	"github.com/metacubex/quic-go"
@@ -216,6 +218,60 @@ func TestOrder(t *testing.T) {
 			require.Error(t, err)
 		}
 	})
+}
+
+// lazyConn is a connection that is only made by its first write, like one
+// with TCP Fast Open.
+type lazyConn struct {
+	net.Conn
+	connected bool
+}
+
+func (c *lazyConn) NeedHandshake() bool { return !c.connected }
+
+func (c *lazyConn) Write(p []byte) (int, error) {
+	c.connected = true
+	if len(p) == 0 {
+		return 0, nil
+	}
+	return c.Conn.Write(p)
+}
+
+type lazyDialer struct{ plain }
+
+func (d lazyDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	conn, err := d.plain.DialContext(ctx, network, address)
+	if err != nil {
+		return nil, err
+	}
+	return &lazyConn{Conn: conn}, nil
+}
+
+// connectedCheck is a TCP mask that fails on a connection not made yet.
+type connectedCheck struct{}
+
+func (connectedCheck) WrapConn(conn net.Conn) (net.Conn, error) {
+	if N.NeedHandshake(conn) {
+		return nil, errors.New("the connection is not made yet")
+	}
+	return conn, nil
+}
+
+func TestLazyConnectionIsMadeBeforeTheMasks(t *testing.T) {
+	mask.RegisterTCP("test-connected", func(map[string]any) (mask.TCPMask, error) { return connectedCheck{}, nil })
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer l.Close()
+
+	conn, err := NewDialer(lazyDialer{}, map[string]any{"tcp": masks("test-connected")}).DialContext(context.Background(), "tcp", l.Addr().String())
+	require.NoError(t, err)
+	_ = conn.Close()
+
+	// without TCP masks the connection is left as it is
+	conn, err = NewDialer(lazyDialer{}, map[string]any{"udp": masks("test-a")}).DialContext(context.Background(), "tcp", l.Addr().String())
+	require.NoError(t, err)
+	require.True(t, N.NeedHandshake(conn))
+	_ = conn.Close()
 }
 
 func TestNoMasksIsTheInnerDialer(t *testing.T) {
