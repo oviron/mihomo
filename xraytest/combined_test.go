@@ -1,7 +1,11 @@
 package xraytest
 
 import (
+	"strconv"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // This file checks that the layers the three parts of the Xray parity work
@@ -68,4 +72,53 @@ func TestCombinedQuicParams(t *testing.T) {
 		},
 	)
 	trRun(t, cases)
+}
+
+// TestCombinedXHTTPDownloadFinalmask: the download leg of XHTTP goes to a
+// server of its own, so the masks of the proxy do not apply to it; it takes
+// the finalmask of download-settings. Two taps in front of one inbound show
+// which leg got its ClientHello cut in pieces by the fragment mask.
+func TestCombinedXHTTPDownloadFinalmask(t *testing.T) {
+	tg := startTargets(t)
+	const fragment = "finalmask: {tcp: [{type: fragment, settings: {packets: tlshello, length: 20-40, delay: 1-2}}]}"
+	for _, protocol := range []string{"vless", "vmess"} {
+		for name, masks := range map[string]struct{ upload, download bool }{
+			"upload-only":   {true, false},
+			"download-only": {false, true},
+			"both":          {true, true},
+			"none":          {false, false},
+		} {
+			t.Run(protocol+"-"+name, func(t *testing.T) {
+				port := freePort(t)
+				trStartXray(t, trInbound(t, protocol, trFill(t, trXHTTPServer(trTLSServer, ""), port, 0), port))
+				upload, download := fmStartTap(t, port), fmStartTap(t, port)
+
+				client := "type: vless\nuuid: %UUID%\n"
+				if protocol == "vmess" {
+					client = "type: vmess\nuuid: %UUID%\nalterId: 0\ncipher: auto\n"
+				}
+				client += trTLSClient + "network: xhttp\nxhttp-opts:\n  path: /xh\n  mode: packet-up\n" +
+					"  download-settings:\n    server: 127.0.0.1\n    port: " + strconv.Itoa(download.port) + "\n"
+				if masks.download {
+					client += "    " + fragment + "\n"
+				}
+				if masks.upload {
+					client += fragment + "\n"
+				}
+				proxy, err := trParseProxy(trFill(t, client, port, 0), upload.port)
+				require.NoError(t, err)
+				defer proxy.Close()
+				require.NoError(t, trRoundTrip(proxy, tg, 1<<20, 30*time.Second))
+
+				// a ClientHello in one record, or in pieces of 20 to 39 bytes
+				fragmented := func(tap *fmTap) bool {
+					records := tap.handshakeRecords()
+					require.NotEmpty(t, records, "the leg was not used")
+					return len(records) >= 4
+				}
+				require.Equal(t, masks.upload, fragmented(upload), "upload leg")
+				require.Equal(t, masks.download, fragmented(download), "download leg")
+			})
+		}
+	}
 }

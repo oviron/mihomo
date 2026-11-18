@@ -3,6 +3,7 @@ package outbound
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"strconv"
@@ -228,6 +229,12 @@ func newXHTTPClient(t xhttpTransport) (*xhttp.Client, error) {
 			return nil, errors.New("xhttp download-settings: shadow-tls-opts, restls-opts and jls-opts are for vless only")
 		}
 		download := *upload
+		// the masks of the proxy are for the upload server; the download
+		// server has those of its own finalmask, or none
+		var err error
+		if download.dialer, err = finalmask.DialerFor(upload.dialer, ds.FinalMask); err != nil {
+			return nil, fmt.Errorf("xhttp download-settings: %w", err)
+		}
 		download.server = lo.FromPtrOr(ds.Server, t.Server)
 		download.addr = net.JoinHostPort(download.server, strconv.Itoa(lo.FromPtrOr(ds.Port, t.Port)))
 		download.tls = lo.FromPtrOr(ds.TLS, t.TLS)
@@ -239,7 +246,6 @@ func newXHTTPClient(t xhttpTransport) (*xhttp.Client, error) {
 		download.tlsConfig.Certificate = lo.FromPtrOr(ds.Certificate, t.TLSConfig.Certificate)
 		download.tlsConfig.PrivateKey = lo.FromPtrOr(ds.PrivateKey, t.TLSConfig.PrivateKey)
 		download.tlsConfig.ClientFingerprint = lo.FromPtrOr(ds.ClientFingerprint, t.TLSConfig.ClientFingerprint)
-		var err error
 		if ds.ECHOpts != nil {
 			if download.tlsConfig.ECH, err = ds.ECHOpts.Parse(); err != nil {
 				return nil, err

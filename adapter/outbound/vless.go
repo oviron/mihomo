@@ -170,6 +170,10 @@ type XHTTPDownloadSettings struct {
 	PrivateKey        *string           `proxy:"private-key,omitempty"`
 	ServerName        *string           `proxy:"servername,omitempty"`
 	ClientFingerprint *string           `proxy:"client-fingerprint,omitempty"`
+
+	// FinalMask is the finalmask of the download server. The masks of the
+	// proxy are those of the upload server and do not apply to it.
+	FinalMask map[string]any `proxy:"finalmask,omitempty"`
 }
 
 func (v *Vless) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.Metadata) (_ net.Conn, err error) {
@@ -778,6 +782,10 @@ func NewVless(option VlessOption) (*Vless, error) {
 			if cfg.Mode == "stream-one" {
 				return nil, fmt.Errorf(`xhttp mode "stream-one" cannot be used with download-settings`)
 			}
+			downloadDialer, err := finalmask.DialerFor(v.dialer, ds.FinalMask)
+			if err != nil {
+				return nil, fmt.Errorf("xhttp download-settings: %w", err)
+			}
 
 			downloadServer := lo.FromPtrOr(ds.Server, v.option.Server)
 			downloadPort := lo.FromPtrOr(ds.Port, v.option.Port)
@@ -890,7 +898,7 @@ func NewVless(option VlessOption) (*Vless, error) {
 			makeDownloadTransport = func() http.RoundTripper {
 				return xhttp.NewTransport(
 					func(ctx context.Context) (net.Conn, error) {
-						return finalmask.Raw(v.dialer).DialContext(ctx, "tcp", downloadAddr) // the masks are for the upload server
+						return downloadDialer.DialContext(ctx, "tcp", downloadAddr) // the masks of the proxy are for the upload server
 					},
 					func(ctx context.Context, conn net.Conn, isH2 bool) (net.Conn, error) {
 						if downloadTLS {
@@ -957,7 +965,7 @@ func NewVless(option VlessOption) (*Vless, error) {
 						if err != nil {
 							return nil, err
 						}
-						_, quicConn, err := common.DialQuic(ctx, downloadAddr, v.DialOptions(), finalmask.Raw(v.dialer), tlsConfig, cfg, common.DialQuicOption{Early: true})
+						_, quicConn, err := common.DialQuic(ctx, downloadAddr, v.DialOptions(), downloadDialer, tlsConfig, cfg, common.DialQuicOption{Early: true})
 						if err != nil {
 							return nil, err
 						}
