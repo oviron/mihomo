@@ -14,6 +14,7 @@ import (
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/gun"
+	"github.com/metacubex/mihomo/transport/hystream"
 	"github.com/metacubex/mihomo/transport/jls"
 	"github.com/metacubex/mihomo/transport/restls"
 	"github.com/metacubex/mihomo/transport/shadowsocks/core"
@@ -35,6 +36,8 @@ type Trojan struct {
 	gunClient *gun.Client
 	// for xhttp
 	xhttpClient *xhttp.Client
+	// for the hysteria transport
+	hysteriaClient *hystream.Client
 
 	echConfig       *ech.Config
 	shadowTLSConfig *shadowtls.Config
@@ -69,6 +72,7 @@ type TrojanOption struct {
 	WSOpts            WSOptions        `proxy:"ws-opts,omitempty"`
 	XHTTPOpts         XHTTPOptions     `proxy:"xhttp-opts,omitempty"`
 	MKCPOpts          MKCPOptions      `proxy:"mkcp-opts,omitempty"`
+	HysteriaOpts      HyStreamOptions  `proxy:"hysteria-opts,omitempty"`
 	SSOpts            TrojanSSOption   `proxy:"ss-opts,omitempty"`
 	ClientFingerprint string           `proxy:"client-fingerprint,omitempty"`
 }
@@ -154,6 +158,8 @@ func (t *Trojan) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.
 		break // already handle in dialContext
 	case "xhttp":
 		break // already handle in dialContext
+	case "hysteria":
+		break // already handle in dialContext
 	default:
 		// default tcp network
 		// handle TLS
@@ -222,6 +228,8 @@ func (t *Trojan) dialContext(ctx context.Context) (c net.Conn, err error) {
 		return t.xhttpClient.Dial(ctx)
 	case "mkcp", "kcp":
 		return dialMKCP(ctx, t.dialer, t.addr, t.option.MKCPOpts)
+	case "hysteria":
+		return t.hysteriaClient.Dial(ctx)
 	default:
 	}
 	return t.dialer.DialContext(ctx, "tcp", t.addr)
@@ -287,6 +295,9 @@ func (t *Trojan) Close() error {
 		if err := t.gunClient.Close(); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	if t.hysteriaClient != nil {
+		_ = t.hysteriaClient.Close()
 	}
 	if t.xhttpClient != nil {
 		if err := t.xhttpClient.Close(); err != nil {
@@ -436,6 +447,33 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 				Restls:            t.restlsConfig,
 				JLS:               t.jlsConfig,
 				Reality:           t.realityConfig,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if option.Network == "hysteria" {
+		sni := option.SNI
+		if sni == option.Server { // defaulted above
+			sni = ""
+		}
+		t.hysteriaClient, err = newHysteriaTransport(hysteriaTransport{
+			Base: t.Base, Dialer: t.dialer, Server: option.Server, Port: option.Port,
+			TLS: true, ALPN: option.ALPN, Options: &t.option.HysteriaOpts,
+			TLSConfig: vmess.TLSConfig{
+				Host:           sni,
+				SkipCertVerify: option.SkipCertVerify,
+				NameCertVerify: option.NameCertVerify,
+				FingerPrint:    option.Fingerprint,
+				Certificate:    option.Certificate,
+				PrivateKey:     option.PrivateKey,
+				ECH:            t.echConfig,
+				ShadowTLS:      t.shadowTLSConfig,
+				Restls:         t.restlsConfig,
+				JLS:            t.jlsConfig,
+				Reality:        t.realityConfig,
 			},
 		})
 		if err != nil {

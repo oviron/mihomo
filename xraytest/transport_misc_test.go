@@ -10,6 +10,7 @@ import (
 
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/component/resolver"
+	C "github.com/metacubex/mihomo/constant"
 
 	"github.com/miekg/dns"
 	"github.com/stretchr/testify/require"
@@ -218,8 +219,37 @@ func TestTransportHysteria(t *testing.T) {
 		{
 			name:   "vless-over-hysteria",
 			stream: `"network":"hysteria","hysteriaSettings":{"version":2,"auth":"%UUID%"},` + h3,
-			client: trTLSClient + "network: hysteria\n",
-			gap:    "no hysteria network for vless",
+			client: trTLSClient + "network: hysteria\nhysteria-opts: {version: 2, auth: %UUID%}\nudp: true\n",
+			check: func(t *testing.T, x *xray, proxy C.Proxy, tg targets) {
+				trCheck(t, proxy, tg)
+				checkUDP(t, proxy, tg) // inside the stream, the transport itself carries no UDP here
+				// several streams share the one connection
+				errs := make(chan error, 8)
+				for i := 0; i < cap(errs); i++ {
+					go func() { errs <- trRoundTrip(proxy, tg, 256<<10, 30*time.Second) }()
+				}
+				for i := 0; i < cap(errs); i++ {
+					require.NoError(t, <-errs)
+				}
+			},
+		},
+		{
+			name:     "trojan-over-hysteria",
+			protocol: "trojan",
+			stream:   `"network":"hysteria","hysteriaSettings":{"version":2,"auth":"%UUID%"},` + h3,
+			client:   "type: trojan\npassword: %UUID%\nsni: example.org\nskip-cert-verify: true\nnetwork: hysteria\nhysteria-opts: {auth: %UUID%}\n",
+		},
+		{
+			name:   "vless-over-hysteria-pinned",
+			stream: `"network":"hysteria","hysteriaSettings":{"version":2,"auth":"%UUID%"},` + h3,
+			client: "tls: true\nservername: example.org\nfingerprint: %PIN%\nnetwork: hysteria\nhysteria-opts: {auth: %UUID%}\n",
+		},
+		{
+			name:   "vless-over-hysteria-wrong-auth",
+			stream: `"network":"hysteria","hysteriaSettings":{"version":2,"auth":"%UUID%"},` + h3,
+			client: trTLSClient + "network: hysteria\nhysteria-opts: {auth: not-the-auth}\n",
+			gap:    "not a gap: the server refuses the auth",
+			gapErr: "auth failed",
 		},
 	})
 }

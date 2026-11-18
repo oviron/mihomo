@@ -18,6 +18,7 @@ import (
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/gun"
+	"github.com/metacubex/mihomo/transport/hystream"
 	"github.com/metacubex/mihomo/transport/jls"
 	"github.com/metacubex/mihomo/transport/restls"
 	"github.com/metacubex/mihomo/transport/shadowtls"
@@ -47,6 +48,8 @@ type Vless struct {
 	gunClient *gun.Client
 	// for xhttp
 	xhttpClient *xhttp.Client
+	// for the hysteria transport
+	hysteriaClient *hystream.Client
 
 	echConfig       *ech.Config
 	shadowTLSConfig *shadowtls.Config
@@ -81,6 +84,7 @@ type VlessOption struct {
 	WSOpts            WSOptions         `proxy:"ws-opts,omitempty"`
 	XHTTPOpts         XHTTPOptions      `proxy:"xhttp-opts,omitempty"`
 	MKCPOpts          MKCPOptions       `proxy:"mkcp-opts,omitempty"`
+	HysteriaOpts      HyStreamOptions   `proxy:"hysteria-opts,omitempty"`
 	WSHeaders         map[string]string `proxy:"ws-headers,omitempty"`
 	SkipCertVerify    bool              `proxy:"skip-cert-verify,omitempty"`
 	NameCertVerify    string            `proxy:"name-cert-verify,omitempty"`
@@ -260,6 +264,8 @@ func (v *Vless) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.M
 		break // already handle in dialContext
 	case "xhttp":
 		break // already handle in dialContext
+	case "hysteria":
+		break // already handle in dialContext
 	default:
 		// default tcp network
 		// handle TLS
@@ -350,6 +356,8 @@ func (v *Vless) dialContext(ctx context.Context) (c net.Conn, err error) {
 		return v.xhttpClient.Dial(ctx)
 	case "mkcp", "kcp":
 		return dialMKCP(ctx, v.dialer, v.addr, v.option.MKCPOpts)
+	case "hysteria":
+		return v.hysteriaClient.Dial(ctx)
 	default:
 	}
 	return v.dialer.DialContext(ctx, "tcp", v.addr)
@@ -429,6 +437,9 @@ func (v *Vless) Close() error {
 		if err := v.gunClient.Close(); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	if v.hysteriaClient != nil {
+		_ = v.hysteriaClient.Close()
 	}
 	if v.xhttpClient != nil {
 		if err := v.xhttpClient.Close(); err != nil {
@@ -925,6 +936,27 @@ func NewVless(option VlessOption) (*Vless, error) {
 		}
 
 		v.xhttpClient, err = xhttp.NewClient(cfg, makeTransport, makeDownloadTransport, v.realityConfig != nil)
+		if err != nil {
+			return nil, err
+		}
+	case "hysteria":
+		v.hysteriaClient, err = newHysteriaTransport(hysteriaTransport{
+			Base: v.Base, Dialer: v.dialer, Server: option.Server, Port: option.Port,
+			TLS: option.TLS, ALPN: option.ALPN, Options: &v.option.HysteriaOpts,
+			TLSConfig: vmess.TLSConfig{
+				Host:           option.ServerName,
+				SkipCertVerify: option.SkipCertVerify,
+				NameCertVerify: option.NameCertVerify,
+				FingerPrint:    option.Fingerprint,
+				Certificate:    option.Certificate,
+				PrivateKey:     option.PrivateKey,
+				ECH:            v.echConfig,
+				ShadowTLS:      v.shadowTLSConfig,
+				Restls:         v.restlsConfig,
+				JLS:            v.jlsConfig,
+				Reality:        v.realityConfig,
+			},
+		})
 		if err != nil {
 			return nil, err
 		}
