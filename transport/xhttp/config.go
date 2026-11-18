@@ -55,6 +55,7 @@ type Config struct {
 	ScMaxBufferedPosts   string // server only
 	ScMaxEachPostBytes   string
 	ScMinPostsIntervalMs string
+	PipelinePosts        bool // client only, see pipeline.go
 	ReuseConfig          *ReuseConfig
 	DownloadConfig       *Config
 }

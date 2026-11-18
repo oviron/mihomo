@@ -187,6 +187,31 @@ xhttp-opts:
 			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, download-settings: {server: 127.0.0.1, port: %PORT%, path: /xh}}\n",
 		},
 		{
+			name:   "pipeline-posts-h2",
+			stream: trXHTTPServer(trTLSServer, `,"scMaxEachPostBytes":32768`),
+			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, sc-max-each-post-bytes: 32768, sc-min-posts-interval-ms: 1, pipeline-posts: true}\n",
+		},
+		{
+			name:   "pipeline-posts-h3",
+			stream: trXHTTPServer(strings.Replace(trTLSServer, "%TLS%", `,"alpn":["h3"]`, 1), `,"scMaxEachPostBytes":32768`),
+			client: trTLSClient + "alpn: [h3]\nnetwork: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, sc-max-each-post-bytes: 32768, sc-min-posts-interval-ms: 1, pipeline-posts: true}\n",
+		},
+		{
+			name:   "pipeline-posts-h1",
+			stream: trXHTTPServer(trTLSServer, `,"scMaxEachPostBytes":32768`),
+			client: trTLSClient + "alpn: [http/1.1]\nnetwork: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, sc-max-each-post-bytes: 32768, sc-min-posts-interval-ms: 1, pipeline-posts: true}\n",
+		},
+		{
+			name:   "pipeline-posts-reality-xmux",
+			stream: trXHTTPServer(trRealityServer, `,"scMaxEachPostBytes":32768`),
+			client: trRealityClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, sc-max-each-post-bytes: 32768, sc-min-posts-interval-ms: 1, pipeline-posts: true, xmux: {max-connections: \"2\", h-max-request-times: 20-30}}\n",
+		},
+		{
+			name:   "pipeline-posts-default-sizes",
+			stream: trXHTTPServer(trTLSServer, ""),
+			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, pipeline-posts: true}\n",
+		},
+		{
 			name:   "xmux-defaults",
 			stream: trXHTTPServer(trTLSServer, ""),
 			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, xmux: {}}\n",

@@ -619,6 +619,9 @@ func (c *Client) DialPacketUp(ctx context.Context) (net.Conn, error) {
 	}
 	writer.writeCond = sync.Cond{L: &writer.writeMu}
 	conn := &Conn{writer: writer}
+	if c.cfg.PipelinePosts {
+		conn.writer = newPipelinedWriter(writer)
+	}
 
 	// Async download: avoid blocking on CDN response header buffering
 	gotConn := make(chan bool, 1)

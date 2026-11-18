@@ -114,6 +114,7 @@ type XHTTPOptions struct {
 	UplinkChunkSize      string                 `proxy:"uplink-chunk-size,omitempty"`
 	ScMaxEachPostBytes   string                 `proxy:"sc-max-each-post-bytes,omitempty"`
 	ScMinPostsIntervalMs string                 `proxy:"sc-min-posts-interval-ms,omitempty"`
+	PipelinePosts        bool                   `proxy:"pipeline-posts,omitempty"`
 	ReuseSettings        *XHTTPReuseSettings    `proxy:"reuse-settings,omitempty"` // aka XMUX
 	Xmux                 *XHTTPReuseSettings    `proxy:"xmux,omitempty"`           // the same with the semantics of Xray
 	DownloadSettings     *XHTTPDownloadSettings `proxy:"download-settings,omitempty"`
@@ -669,6 +670,7 @@ func NewVless(option VlessOption) (*Vless, error) {
 			UplinkChunkSize:      v.option.XHTTPOpts.UplinkChunkSize,
 			ScMaxEachPostBytes:   v.option.XHTTPOpts.ScMaxEachPostBytes,
 			ScMinPostsIntervalMs: v.option.XHTTPOpts.ScMinPostsIntervalMs,
+			PipelinePosts:        v.option.XHTTPOpts.PipelinePosts,
 			ReuseConfig:          reuseCfg,
 		}
 
