@@ -457,7 +457,9 @@ What goes with it:
   the transport; a connection that does not go to the proxy's server leaves
   out both.
 - `xicmp` opens ICMP sockets, not through the proxy's dialer: a proxy with it
-  can't have `dialer-proxy`, `interface-name` or `routing-mark`. UDP masks can't
+  can't have `dialer-proxy`, `interface-name` or `routing-mark`. With
+  `dgram: true` it runs without root; on Linux the group of the process has
+  to be within `net.ipv4.ping_group_range`. UDP masks can't
   be combined with `realm-opts` of the hysteria2 outbound, and `udphop`,
   `xdns`, `xicmp` and `realm`, which pick where to send, not with its `ports`.
 - `tls-config` of `realm` and of the HTTPS resolvers of `xdns` takes
@@ -518,6 +520,15 @@ Found while testing against v26.11.9, for whoever configures the server:
   113 bytes does not work. The server derives an RSA key from it that Go
   refuses (`crypto/rsa: |p - q| too small`) and drops every connection. A
   36-character UUID is such a password. mihomo warns about it in the log.
+- `xmc` and `header-custom` over TCP on a REALITY inbound: the first
+  connection brings the whole server down (`panic: ... is not
+  reality.CloseWriteConn`). REALITY asks the connection under it for
+  `CloseWrite`, which the connections of these two masks don't have. On a
+  server put them under TLS or under no security; `sudoku` has the method and
+  works under REALITY.
+- `xicmp`: the server takes every echo request with more than 8 bytes of
+  data for a client, an ordinary ping included, and writes a line of level
+  Error to its log for each.
 - `xdns` with resolvers of type `tcp`: Xray-core's own client sends the DNS
   messages without the length prefix. mihomo sends it.
 - `xdns` and the mKCP `mtu` of the server: the server drops a datagram of

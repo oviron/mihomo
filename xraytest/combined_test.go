@@ -1,7 +1,9 @@
 package xraytest
 
 import (
+	"encoding/json"
 	"fmt"
+	"net"
 	"regexp"
 	"strconv"
 	"testing"
@@ -430,4 +432,38 @@ func TestCombinedChecks(t *testing.T) {
 		}
 		require.ErrorContains(t, err, c.want, name)
 	}
+}
+
+// TestCombinedMaskUnderREALITYCrashesXray records what Xray-core v26.11.9
+// does with a TCP mask under REALITY: its REALITY server asks the connection
+// for CloseWrite, the connection of xmc and of header-custom has none, and
+// the first client brings the whole server down. sudoku has the method and
+// works (TestCombinedLayers). When this test fails, Xray was fixed: move the
+// cases to the working ones.
+func TestCombinedMaskUnderREALITYCrashesXray(t *testing.T) {
+	xmc, err := json.Marshal(fmXMCSettings("8-bytes!", "", "Player_One"))
+	require.NoError(t, err)
+	custom := `{"clients":[[{"packet":"ping","type":"str"}]],"servers":[[{"packet":"pong","type":"str"}]]}`
+	var cases []trCase
+	for name, settings := range map[string]string{"xmc": string(xmc), "header-custom": custom} {
+		mask := `{"tcp":[{"type":"` + name + `","settings":` + settings + `}]}`
+		cases = append(cases, trCase{
+			name:   name,
+			stream: `"network":"raw",` + trRealityServer + `,"finalmask":` + mask,
+			client: "type: vless\nuuid: %UUID%\n" + trRealityClient + "finalmask: " + mask + "\n",
+			check: func(t *testing.T, x *xray, proxy C.Proxy, tg targets) {
+				require.Error(t, trRoundTrip(proxy, tg, 16, 5*time.Second))
+				x.waitCount(t, "is not reality.CloseWriteConn", 1)
+				// not one connection lost: the process is gone
+				require.Eventually(t, func() bool {
+					conn, err := net.DialTimeout("tcp", proxy.Addr(), time.Second)
+					if err == nil {
+						_ = conn.Close()
+					}
+					return err != nil
+				}, 10*time.Second, 50*time.Millisecond, "Xray-core still listens")
+			},
+		})
+	}
+	trRun(t, cases)
 }
