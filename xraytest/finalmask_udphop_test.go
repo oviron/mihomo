@@ -24,11 +24,12 @@ type fmFanIn struct {
 	mu      sync.Mutex
 	clients map[string]*net.UDPConn // client address -> upstream socket
 	hits    map[int]int             // port -> packets
+	replies map[string]int          // client address -> packets of the server
 }
 
 func fmStartFanIn(t *testing.T, serverPort, n int) *fmFanIn {
 	t.Helper()
-	fan := &fmFanIn{clients: map[string]*net.UDPConn{}, hits: map[int]int{}}
+	fan := &fmFanIn{clients: map[string]*net.UDPConn{}, hits: map[int]int{}, replies: map[string]int{}}
 	server := net.UDPAddrFromAddrPort(loopback(serverPort))
 	for i := 0; i < n; i++ {
 		l, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -62,6 +63,9 @@ func fmStartFanIn(t *testing.T, serverPort, n int) *fmFanIn {
 							if err != nil {
 								return
 							}
+							fan.mu.Lock()
+							fan.replies[client.String()]++
+							fan.mu.Unlock()
 							_, _ = l.WriteToUDP(buf[:n], client)
 						}
 					}()
@@ -87,6 +91,14 @@ func (fan *fmFanIn) seen() (clients, ports int) {
 	fan.mu.Lock()
 	defer fan.mu.Unlock()
 	return len(fan.clients), len(fan.hits)
+}
+
+// answered returns how many client addresses the server has sent packets to:
+// more than one means it follows the client to its new socket.
+func (fan *fmFanIn) answered() int {
+	fan.mu.Lock()
+	defer fan.mu.Unlock()
+	return len(fan.replies)
 }
 
 // fmEchoUntil keeps one proxied connection busy until done reports true: the
