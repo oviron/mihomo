@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/metacubex/mihomo/component/dialer"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/tuic/common"
 	"github.com/metacubex/mihomo/transport/vmess"
@@ -75,13 +76,14 @@ func (o *XHTTPDownloadXHTTPOptions) apply(cfg *xhttp.Config) {
 // the adapters that carry their protocol over XHTTP the way Xray-core lets any
 // protocol do; VLESS builds its client in vless.go.
 type xhttpTransport struct {
-	Base   *Base
-	Basic  *BasicOption
-	Dialer C.Dialer
-	Server string
-	Port   int
-	TLS    bool
-	ALPN   []string
+	// DialOptions are the dial options of the proxy, for the QUIC connections
+	// of HTTP/3, which do not go through Dialer.
+	DialOptions []dialer.Option
+	Dialer      C.Dialer
+	Server      string
+	Port        int
+	TLS         bool
+	ALPN        []string
 	// TLSConfig holds the TLS options of the proxy; Host is the server name
 	// and may be empty, NextProtos is filled per connection.
 	TLSConfig vmess.TLSConfig
@@ -91,15 +93,14 @@ type xhttpTransport struct {
 // xhttpLeg is one of the two connections of an XHTTP stream: where it goes
 // and how it is secured.
 type xhttpLeg struct {
-	base      *Base
-	basic     *BasicOption
-	dialer    C.Dialer
-	server    string
-	addr      string
-	tls       bool
-	alpn      []string
-	tlsConfig vmess.TLSConfig
-	keepAlive time.Duration
+	dialOptions []dialer.Option
+	dialer      C.Dialer
+	server      string
+	addr        string
+	tls         bool
+	alpn        []string
+	tlsConfig   vmess.TLSConfig
+	keepAlive   time.Duration
 }
 
 func (l *xhttpLeg) serverName() string {
@@ -155,7 +156,7 @@ func (l *xhttpLeg) transport() http.RoundTripper {
 			if err = tlsConfig.ECH.ClientHandle(ctx, stdConfig); err != nil {
 				return nil, err
 			}
-			_, quicConn, err := common.DialQuic(ctx, l.addr, l.basic.quicDialOptions(l.base), l.dialer, stdConfig, cfg, common.DialQuicOption{Early: true})
+			_, quicConn, err := common.DialQuic(ctx, l.addr, l.dialOptions, l.dialer, stdConfig, cfg, common.DialQuicOption{Early: true})
 			return quicConn, err
 		},
 		l.alpn,
@@ -166,14 +167,13 @@ func (l *xhttpLeg) transport() http.RoundTripper {
 func newXHTTPClient(t xhttpTransport) (*xhttp.Client, error) {
 	opts := t.Options
 	upload := &xhttpLeg{
-		base:      t.Base,
-		basic:     t.Basic,
-		dialer:    t.Dialer,
-		server:    t.Server,
-		addr:      net.JoinHostPort(t.Server, strconv.Itoa(t.Port)),
-		tls:       t.TLS,
-		alpn:      t.ALPN,
-		tlsConfig: t.TLSConfig,
+		dialOptions: t.DialOptions,
+		dialer:      t.Dialer,
+		server:      t.Server,
+		addr:        net.JoinHostPort(t.Server, strconv.Itoa(t.Port)),
+		tls:         t.TLS,
+		alpn:        t.ALPN,
+		tlsConfig:   t.TLSConfig,
 	}
 
 	var reuseCfg *xhttp.ReuseConfig

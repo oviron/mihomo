@@ -1,6 +1,9 @@
 package xraytest
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // streamSettings of Xray-core apply to an inbound of any protocol. This is the
 // matrix of the protocols other than VLESS against the transports and the
@@ -64,4 +67,74 @@ func TestTransportMatrix(t *testing.T) {
 		{name: "http-raw", protocol: "http", stream: raw, client: "type: http\n"},
 		{name: "http-tls", protocol: "http", stream: raw + "," + trTLSServer, client: "type: http\ntls: true\nsni: example.org\nskip-cert-verify: true\n"},
 	})
+}
+
+// The protocols whose adapters have no transport options take them from
+// stream-settings, the transport as a layer under any proxy protocol.
+func TestTransportMatrixStreamSettings(t *testing.T) {
+	const (
+		ws          = `"network":"ws","wsSettings":{"path":"/ws"}`
+		grpc        = `"network":"grpc","grpcSettings":{"serviceName":"gun"}`
+		httpupgrade = `"network":"httpupgrade","httpupgradeSettings":{"path":"/up"}`
+		xhttp       = `"network":"xhttp","xhttpSettings":{"path":"/xh"}`
+		kcp         = `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]}`
+		raw         = `"network":"raw"`
+
+		tls     = "tls: true, servername: example.org, skip-cert-verify: true"
+		reality = "tls: true, servername: example.org, client-fingerprint: chrome, reality-opts: {public-key: %PUB%, short-id: 0123456789abcdef, support-x25519mlkem768: true}"
+	)
+	type transport struct {
+		name, stream, settings string
+	}
+	transports := []transport{
+		{"tls", raw + "," + trTLSServer, tls},
+		{"tls-utls", raw + "," + trTLSServer, tls + ", client-fingerprint: chrome"},
+		{"reality", raw + "," + trRealityServer, reality},
+		{"ws", ws, "network: ws, ws-opts: {path: /ws}"},
+		{"ws-tls", ws + "," + trTLSServer, "network: ws, " + tls + ", ws-opts: {path: /ws}"},
+		{"httpupgrade-tls", httpupgrade + "," + trTLSServer, "network: httpupgrade, " + tls + ", ws-opts: {path: /up}"},
+		{"grpc", grpc, "network: grpc, grpc-opts: {grpc-service-name: gun}"},
+		{"grpc-tls", grpc + "," + trTLSServer, "network: grpc, " + tls + ", grpc-opts: {grpc-service-name: gun}"},
+		{"grpc-reality", grpc + "," + trRealityServer, "network: grpc, " + reality + ", grpc-opts: {grpc-service-name: gun}"},
+		{"xhttp", xhttp, "network: xhttp, xhttp-opts: {path: /xh}"},
+		{"xhttp-tls", xhttp + "," + trTLSServer, "network: xhttp, " + tls + ", xhttp-opts: {path: /xh, mode: packet-up, pipeline-posts: true, xmux: {}}"},
+		{"xhttp-h3", xhttp + "," + strings.Replace(trTLSServer, "%TLS%", `,"alpn":["h3"]`, 1), "network: xhttp, alpn: [h3], " + tls + ", xhttp-opts: {path: /xh, mode: stream-up}"},
+		{"xhttp-reality", xhttp + "," + trRealityServer, "network: xhttp, " + reality + ", xhttp-opts: {path: /xh}"},
+		{"kcp", kcp, "network: kcp"},
+		{"kcp-tls", kcp + "," + trTLSServer, "network: kcp, " + tls},
+	}
+	protocols := []struct{ name, inbound, client string }{
+		{"ss", "shadowsocks", "type: ss\ncipher: aes-128-gcm\npassword: %UUID%\n"},
+		{"socks", "socks", "type: socks5\n"},
+		{"http", "http", "type: http\n"},
+	}
+	var cases []trCase
+	for _, protocol := range protocols {
+		for _, tr := range transports {
+			c := trCase{
+				name:     protocol.name + "-" + tr.name,
+				protocol: protocol.inbound,
+				stream:   tr.stream,
+				client:   protocol.client + "stream-settings: {" + tr.settings + "}\n",
+			}
+			if protocol.name == "socks" && (strings.HasPrefix(tr.name, "kcp") || tr.name == "xhttp-h3") {
+				// proxy/socks/server.go:112 takes the peer address for a TCP one
+				c.gap = "not a client gap: the socks inbound of Xray-core 26.11.9 panics on a transport over UDP"
+			}
+			cases = append(cases, c)
+		}
+	}
+	cases = append(cases,
+		trCase{
+			name: "ss-reality-over-ws-is-refused", protocol: "shadowsocks", stream: raw,
+			client: "type: ss\ncipher: aes-128-gcm\npassword: %UUID%\nstream-settings: {network: ws, " + reality + "}\n",
+			gap:    "not a gap: Xray-core has REALITY for raw, grpc and xhttp only", gapErr: "REALITY goes with",
+		},
+		trCase{
+			name: "ss-unknown-network", protocol: "shadowsocks", stream: raw,
+			client: "type: ss\ncipher: aes-128-gcm\npassword: %UUID%\nstream-settings: {network: quic}\n",
+			gap:    "not a gap: no such transport", gapErr: "unknown network",
+		},
+	)
+	trRun(t, cases)
 }

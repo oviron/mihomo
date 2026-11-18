@@ -441,7 +441,7 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 	}
 	if option.Network == "xhttp" {
 		t.xhttpClient, err = newXHTTPClient(xhttpTransport{
-			Base: t.Base, Basic: &t.option.BasicOption, Dialer: t.dialer, Server: option.Server, Port: option.Port,
+			DialOptions: t.option.BasicOption.quicDialOptions(t.Base), Dialer: t.dialer, Server: option.Server, Port: option.Port,
 			TLS: !t.noTLS(), ALPN: option.ALPN, Options: &t.option.XHTTPOpts,
 			TLSConfig: vmess.TLSConfig{
 				Host:              sni,

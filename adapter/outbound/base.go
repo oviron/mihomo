@@ -199,6 +199,9 @@ type BasicOption struct {
 	IPVersion   C.DNSPrefer `proxy:"ip-version,omitempty"`
 	DialerProxy string      `proxy:"dialer-proxy,omitempty"` // don't apply this option into groups, but can set a group name in a proxy
 
+	// StreamSettings puts a transport under any proxy protocol, see stream_settings.go.
+	StreamSettings *StreamSettings `proxy:"stream-settings,omitempty"`
+
 	//
 	// The following parameters are used internally, assign value by the structure decoder are disallowed
 	//
@@ -216,6 +219,9 @@ func (b *BasicOption) NewDialer(opts []dialer.Option) C.Dialer {
 		} else {
 			cDialer = dialer.NewDialer(opts...)
 		}
+	}
+	if b.StreamSettings != nil { // the outermost layer: anything that masks the wire goes under it
+		cDialer = b.StreamSettings.wrap(cDialer, opts)
 	}
 	return cDialer
 }
