@@ -54,6 +54,7 @@ type TrojanOption struct {
 	Server            string           `proxy:"server"`
 	Port              int              `proxy:"port"`
 	Password          string           `proxy:"password"`
+	TLS               *bool            `proxy:"tls,omitempty"` // false is trojan without TLS, which Xray-core serves too; TLS when unset
 	ALPN              []string         `proxy:"alpn,omitempty"`
 	SNI               string           `proxy:"sni,omitempty"`
 	SkipCertVerify    bool             `proxy:"skip-cert-verify,omitempty"`
@@ -134,7 +135,7 @@ func (t *Trojan) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.
 			if err != nil {
 				return nil, err
 			}
-		} else {
+		} else if !t.noTLS() {
 			wsOpts.TLS = true
 			wsOpts.TLSConfig, err = ca.GetTLSConfig(ca.Option{
 				TLSConfig: &tls.Config{
@@ -161,6 +162,9 @@ func (t *Trojan) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.
 	case "hysteria":
 		break // already handle in dialContext
 	default:
+		if t.noTLS() {
+			break
+		}
 		// default tcp network
 		// handle TLS
 		alpn := trojan.DefaultALPN
@@ -188,6 +192,10 @@ func (t *Trojan) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.
 	}
 
 	return t.streamConnContext(ctx, c, metadata)
+}
+
+func (t *Trojan) noTLS() bool {
+	return t.option.TLS != nil && !*t.option.TLS
 }
 
 func (t *Trojan) streamConnContext(ctx context.Context, c net.Conn, metadata *C.Metadata) (_ net.Conn, err error) {
@@ -410,6 +418,10 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 			Reality:           t.realityConfig,
 		}
 
+		if t.noTLS() {
+			tlsConfig = nil
+		}
+
 		gunConfig := &gun.Config{
 			ServiceName:  option.GrpcOpts.GrpcServiceName,
 			UserAgent:    option.GrpcOpts.GrpcUserAgent,
@@ -430,7 +442,7 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 	if option.Network == "xhttp" {
 		t.xhttpClient, err = newXHTTPClient(xhttpTransport{
 			Base: t.Base, Basic: &t.option.BasicOption, Dialer: t.dialer, Server: option.Server, Port: option.Port,
-			TLS: true, ALPN: option.ALPN, Options: &t.option.XHTTPOpts,
+			TLS: !t.noTLS(), ALPN: option.ALPN, Options: &t.option.XHTTPOpts,
 			TLSConfig: vmess.TLSConfig{
 				Host:              sni,
 				SkipCertVerify:    option.SkipCertVerify,
@@ -454,7 +466,7 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 	if option.Network == "hysteria" {
 		t.hysteriaClient, err = newHysteriaTransport(hysteriaTransport{
 			Base: t.Base, Basic: &t.option.BasicOption, Dialer: t.dialer, Server: option.Server, Port: option.Port,
-			TLS: true, ALPN: option.ALPN, Options: &t.option.HysteriaOpts,
+			TLS: !t.noTLS(), ALPN: option.ALPN, Options: &t.option.HysteriaOpts,
 			TLSConfig: vmess.TLSConfig{
 				Host:           sni,
 				SkipCertVerify: option.SkipCertVerify,

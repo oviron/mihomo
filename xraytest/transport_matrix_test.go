@@ -13,6 +13,9 @@ func TestTransportMatrix(t *testing.T) {
 		httpupgrade = `"network":"httpupgrade","httpupgradeSettings":{"path":"/up"}`
 		raw         = `"network":"raw"`
 
+		hysteria = `"network":"hysteria","hysteriaSettings":{"version":2,"auth":"%UUID%"},"security":"tls","tlsSettings":{"alpn":["h3"],"certificates":[{"certificateFile":"%CERT%","keyFile":"%KEY%"}]}`
+
+		trojanPlain   = "type: trojan\npassword: %UUID%\ntls: false\n"
 		trojan        = "type: trojan\npassword: %UUID%\nsni: example.org\nskip-cert-verify: true\n"
 		trojanReality = "type: trojan\npassword: %UUID%\nsni: example.org\nclient-fingerprint: chrome\nreality-opts: {public-key: %PUB%, short-id: 0123456789abcdef, support-x25519mlkem768: true}\n"
 		vmess         = "type: vmess\nuuid: %UUID%\nalterId: 0\ncipher: auto\n"
@@ -28,9 +31,15 @@ func TestTransportMatrix(t *testing.T) {
 		{name: "trojan-reality", protocol: "trojan", stream: raw + "," + trRealityServer, client: trojanReality},
 		{name: "trojan-grpc-reality", protocol: "trojan", stream: grpc + "," + trRealityServer, client: trojanReality + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n"},
 		{
-			name: "trojan-no-security", protocol: "trojan", stream: raw, client: trojan,
-			gap: "the trojan adapter always wraps the connection in TLS",
+			name: "trojan-no-security-default", protocol: "trojan", stream: raw, client: trojan,
+			gap: "by design: the trojan adapter wraps the connection in TLS unless tls is false",
 		},
+		{name: "trojan-no-security", protocol: "trojan", stream: raw, client: trojanPlain},
+		{name: "trojan-ws-no-security", protocol: "trojan", stream: ws, client: trojanPlain + "network: ws\nws-opts: {path: /ws}\n"},
+		{name: "trojan-grpc-no-security", protocol: "trojan", stream: grpc, client: trojanPlain + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n"},
+		{name: "trojan-xhttp-no-security", protocol: "trojan", stream: `"network":"xhttp","xhttpSettings":{"path":"/xh"}`, client: trojanPlain + "network: xhttp\nxhttp-opts: {path: /xh}\n"},
+		{name: "trojan-kcp-no-security", protocol: "trojan", stream: `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]}`, client: trojanPlain + "network: kcp\n"},
+		{name: "trojan-hysteria", protocol: "trojan", stream: hysteria, client: trojan + "network: hysteria\nhysteria-opts: {auth: %UUID%}\n"},
 
 		// VMess
 		{name: "vmess-raw", protocol: "vmess", stream: raw, client: vmess},
@@ -40,6 +49,7 @@ func TestTransportMatrix(t *testing.T) {
 		{name: "vmess-grpc-tls", protocol: "vmess", stream: grpc + "," + trTLSServer, client: vmess + trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n"},
 		{name: "vmess-httpupgrade-tls", protocol: "vmess", stream: httpupgrade + "," + trTLSServer, client: vmess + trTLSClient + "network: ws\nws-opts: {path: /up, v2ray-http-upgrade: true}\n"},
 		{name: "vmess-reality", protocol: "vmess", stream: raw + "," + trRealityServer, client: vmess + trRealityClient},
+		{name: "vmess-hysteria", protocol: "vmess", stream: hysteria, client: vmess + trTLSClient + "network: hysteria\nhysteria-opts: {auth: %UUID%}\n"},
 		{name: "vmess-grpc-reality", protocol: "vmess", stream: grpc + "," + trRealityServer, client: vmess + trRealityClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n"},
 
 		// Shadowsocks: its transports are the modes of the v2ray-plugin option
