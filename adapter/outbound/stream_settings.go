@@ -31,7 +31,10 @@ import (
 // VLESS, VMess and Trojan have, and take theirs.
 //
 // It works as a dialer: where the adapter dials the server over TCP it gets
-// the established transport instead. UDP sockets are not touched.
+// the established transport instead. UDP sockets are not touched, as Xray-core
+// carries only the TCP side of these protocols over a transport: such a proxy
+// goes without `udp`. The security is set here and not with the `tls` option
+// the SOCKS and HTTP adapters have, which would be a second TLS inside.
 type StreamSettings struct {
 	Network           string         `proxy:"network,omitempty"` // raw (default), ws, httpupgrade, grpc, xhttp, kcp
 	TLS               bool           `proxy:"tls,omitempty"`
@@ -120,6 +123,13 @@ func (d *streamDialer) tlsConfig(address string, alpn []string) *vmess.TLSConfig
 		ECH:               d.ech,
 		Reality:           d.reality,
 	}
+}
+
+func (d *streamDialer) ListenPacket(ctx context.Context, network, address string, rAddrPort netip.AddrPort) (net.PacketConn, error) {
+	if d.err != nil { // a mistake in the settings stops the proxy as a whole
+		return nil, d.err
+	}
+	return d.Dialer.ListenPacket(ctx, network, address, rAddrPort)
 }
 
 func (d *streamDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -241,8 +251,9 @@ func (d *streamDialer) gunClient(address string) (*gun.Client, error) {
 		return client, nil
 	}
 	s := d.settings
+	inner := d.Dialer // not d: a live connection must not keep the finalizer of d from running
 	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		return d.Dialer.DialContext(ctx, "tcp", address)
+		return inner.DialContext(ctx, "tcp", address)
 	}
 	gunConfig := &gun.Config{
 		ServiceName:  s.GrpcOpts.GrpcServiceName,

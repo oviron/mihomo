@@ -378,6 +378,9 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 	if len(securityModes) > 1 {
 		return nil, errors.New("security modes are mutually exclusive: " + strings.Join(securityModes, ", "))
 	}
+	if t.noTLS() && len(securityModes) == 1 { // never the password in the clear by an oversight
+		return nil, fmt.Errorf("%s requires TLS", securityModes[0])
+	}
 
 	if option.SSOpts.Enabled {
 		if option.SSOpts.Password == "" {

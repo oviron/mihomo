@@ -120,6 +120,7 @@ func TestTransportMatrixStreamSettings(t *testing.T) {
 			if protocol.name == "socks" && (strings.HasPrefix(tr.name, "kcp") || tr.name == "xhttp-h3") {
 				// proxy/socks/server.go:112 takes the peer address for a TCP one
 				c.gap = "not a client gap: the socks inbound of Xray-core 26.11.9 panics on a transport over UDP"
+				c.serverLog = "interface conversion: net.Addr is *net.UDPAddr, not *net.TCPAddr"
 			}
 			cases = append(cases, c)
 		}
@@ -136,5 +137,10 @@ func TestTransportMatrixStreamSettings(t *testing.T) {
 			gap:    "not a gap: no such transport", gapErr: "unknown network",
 		},
 	)
+	cases = append(cases, trCase{
+		name: "trojan-tls-false-with-reality-is-refused", protocol: "trojan", stream: raw + "," + trRealityServer,
+		client:   "type: trojan\npassword: %UUID%\ntls: false\nclient-fingerprint: chrome\nreality-opts: {public-key: %PUB%, short-id: 0123456789abcdef}\n",
+		parseErr: "REALITY requires TLS",
+	})
 	trRun(t, cases)
 }

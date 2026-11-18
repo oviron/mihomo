@@ -204,6 +204,8 @@ type trCase struct {
 	// gapErr, when set, must be part of the error of a gap case, so that the
 	// case cannot pass on some unrelated failure.
 	gapErr string
+	// parseErr, when set, must be part of the error of building the proxy.
+	parseErr string
 	// check replaces the default round trip.
 	check func(t *testing.T, x *xray, proxy C.Proxy, tg targets)
 }
@@ -340,6 +342,10 @@ func trRun(t *testing.T, cases []trCase) {
 				client = "type: vless\nuuid: %UUID%\n" + client
 			}
 			proxy, err := trParseProxy(trFill(t, client, port, target), port)
+			if c.parseErr != "" {
+				require.ErrorContains(t, err, c.parseErr)
+				return
+			}
 			require.NoError(t, err, "parse proxy")
 			t.Cleanup(func() { _ = proxy.Close() })
 			if c.gap != "" {
@@ -349,6 +355,9 @@ func trRun(t *testing.T, cases []trCase) {
 					require.ErrorContains(t, err, c.gapErr)
 				}
 				t.Logf("known gap (%s): %v", c.gap, err)
+				if c.serverLog != "" {
+					x.waitCount(t, c.serverLog, 1)
+				}
 				return
 			}
 			if c.check != nil {

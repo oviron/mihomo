@@ -37,6 +37,11 @@ func TestTransportGRPC(t *testing.T) {
 			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n",
 		},
 		{
+			name:   "default-service-name-of-xray",
+			stream: grpc(`"multiMode":false`, trTLSServer),
+			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: \"//Tun\"}\n",
+		},
+		{
 			name:   "custom-path",
 			stream: grpc(`"serviceName":"/api/v1/Stream|Multi"`, trTLSServer),
 			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: /api/v1/Stream}\n",

@@ -29,7 +29,16 @@ type Sockopt struct {
 // quicDialOptions are the dial options of the proxy for a QUIC connection its
 // transport opens by itself, with the address-port-strategy of the proxy.
 func (b *BasicOption) quicDialOptions(base *Base) []dialer.Option {
-	return b.Sockopt.appendTo(base.DialOptions())
+	return b.dialSockopt().appendTo(base.DialOptions())
+}
+
+// dialSockopt is the sockopt block for the sockets this proxy opens itself:
+// none with a dialer-proxy, whose sockets and addresses are that proxy's.
+func (b *BasicOption) dialSockopt() Sockopt {
+	if b.DialerProxy != "" {
+		return Sockopt{}
+	}
+	return b.Sockopt
 }
 
 // appendTo adds the socket options to the options of a dialer.

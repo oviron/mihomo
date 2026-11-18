@@ -211,7 +211,7 @@ type BasicOption struct {
 }
 
 func (b *BasicOption) NewDialer(opts []dialer.Option) C.Dialer {
-	opts = b.Sockopt.appendTo(opts)
+	opts = b.dialSockopt().appendTo(opts)
 	cDialer := b.DialerForAPI
 	if cDialer == nil {
 		if b.DialerProxy != "" {
