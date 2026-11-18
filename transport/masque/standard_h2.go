@@ -244,7 +244,12 @@ func (s *h2CapsuleStream) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	case payload := <-s.datagrams:
 		return payload, nil
 	case <-s.done:
-		return nil, s.err
+		select { // what arrived before the end is still delivered
+		case payload := <-s.datagrams:
+			return payload, nil
+		default:
+			return nil, s.err
+		}
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
