@@ -179,6 +179,8 @@ func TestXmuxClosedPool(t *testing.T) {
 	require.NoError(t, manager.Close())
 	_, err = rt.RoundTrip(&http.Request{})
 	assert.Error(t, err)
+	_, err = manager.acquireRequest()
+	assert.Error(t, err)
 	assert.Len(t, *made, 1)
 }
 

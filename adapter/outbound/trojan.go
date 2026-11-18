@@ -416,11 +416,15 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 		)
 	}
 	if option.Network == "xhttp" {
+		sni := option.SNI
+		if sni == option.Server { // defaulted above; each leg falls back to its own server
+			sni = ""
+		}
 		t.xhttpClient, err = newXHTTPClient(xhttpTransport{
 			Base: t.Base, Dialer: t.dialer, Server: option.Server, Port: option.Port,
 			TLS: true, ALPN: option.ALPN, Options: &t.option.XHTTPOpts,
 			TLSConfig: vmess.TLSConfig{
-				Host:              option.SNI,
+				Host:              sni,
 				SkipCertVerify:    option.SkipCertVerify,
 				NameCertVerify:    option.NameCertVerify,
 				FingerPrint:       option.Fingerprint,
@@ -428,6 +432,9 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 				PrivateKey:        option.PrivateKey,
 				ClientFingerprint: option.ClientFingerprint,
 				ECH:               t.echConfig,
+				ShadowTLS:         t.shadowTLSConfig,
+				Restls:            t.restlsConfig,
+				JLS:               t.jlsConfig,
 				Reality:           t.realityConfig,
 			},
 		})

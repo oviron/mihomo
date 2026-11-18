@@ -620,7 +620,9 @@ func (c *Client) DialPacketUp(ctx context.Context) (net.Conn, error) {
 	writer.writeCond = sync.Cond{L: &writer.writeMu}
 	conn := &Conn{writer: writer}
 	if c.cfg.PipelinePosts {
-		conn.writer = newPipelinedWriter(writer)
+		pipelined := newPipelinedWriter(writer)
+		pipelined.onFail = func() { _ = conn.reader.Close() } // set below, before any Write
+		conn.writer = pipelined
 	}
 
 	// Async download: avoid blocking on CDN response header buffering

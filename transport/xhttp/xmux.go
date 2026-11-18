@@ -70,15 +70,47 @@ func (m *ReuseManager) releaseEntry(entry *reuseEntry) {
 	entry.release()
 }
 
-// acquireEntry takes a usage of a pooled entry for a stream that already runs.
-func (m *ReuseManager) acquireEntry() (*reuseEntry, error) {
-	m.mu.Lock()
-	closed := m.closed
-	m.mu.Unlock()
-	if closed {
-		return nil, io.ErrClosedPipe
+// reserve takes one of the requests the entry has left. It never takes more
+// than there are, however many streams ask at once.
+func (entry *reuseEntry) reserve() bool {
+	for {
+		left := entry.leftRequests.Load()
+		if left <= 0 {
+			return false
+		}
+		if entry.leftRequests.CompareAndSwap(left, left-1) {
+			return true
+		}
 	}
-	return m.GetTransport().(*ReuseTransport).entry, nil
+}
+
+// acquireRequest takes a usage of a pooled entry and one request on it, for a
+// stream that already runs and has used its entry up. Unlike GetTransport it
+// is one step under the lock of the pool, and a closed pool gives nothing.
+func (m *ReuseManager) acquireRequest() (*reuseEntry, error) {
+	now := time.Now()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for attempt := 0; attempt < 64; attempt++ {
+		if m.closed {
+			return nil, io.ErrClosedPipe
+		}
+		m.cleanupLocked(now)
+		var entry *reuseEntry
+		if !m.shouldCreateLocked() {
+			entry = m.pickLocked()
+		}
+		if entry == nil {
+			entry = m.newEntryLocked(m.maker(), now)
+		} else {
+			entry.reuseCount.Add(1)
+		}
+		if entry.reserve() { // another stream may have been faster
+			entry.openUsage.Add(1)
+			return entry, nil
+		}
+	}
+	return nil, errors.New("xhttp: no connection with requests left")
 }
 
 // xmuxHeld is a pooled connection a stream holds: the current one, or an
@@ -110,20 +142,8 @@ func (x *xmuxState) acquire() (*xmuxHeld, error) {
 		return nil, io.ErrClosedPipe
 	}
 	current := x.held[len(x.held)-1]
-	// Other streams take requests of the same entries, so a fresh one may be
-	// used up before this request gets to it: try again, a few times.
-	for attempt := 0; ; attempt++ {
-		entry := current.entry
-		if entry.leftRequests.Add(-1) >= 0 && !entry.expired(time.Now()) && !entry.isClosed() {
-			break
-		}
-		if attempt == 8 {
-			if entry.isClosed() {
-				return nil, io.ErrClosedPipe
-			}
-			break
-		}
-		nextEntry, err := x.manager.acquireEntry()
+	if entry := current.entry; entry.isClosed() || entry.expired(time.Now()) || !entry.reserve() {
+		nextEntry, err := x.manager.acquireRequest()
 		if err != nil {
 			return nil, err
 		}

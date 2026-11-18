@@ -140,8 +140,8 @@ func (l *xhttpLeg) transport() http.RoundTripper {
 			if !l.tls {
 				return nil, errors.New("xhttp HTTP/3 requires TLS")
 			}
-			if l.tlsConfig.Reality != nil {
-				return nil, errors.New("xhttp HTTP/3 does not support REALITY")
+			if c := l.tlsConfig; c.Reality != nil || c.ShadowTLS != nil || c.Restls != nil || c.JLS != nil || c.TLSMirror != nil {
+				return nil, errors.New("xhttp HTTP/3 takes plain TLS only")
 			}
 			tlsConfig := l.tlsConfig
 			tlsConfig.Host = l.serverName()

@@ -10,17 +10,19 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/metacubex/mihomo/common/contextutils"
 	"github.com/metacubex/mihomo/common/httputils"
 
 	"github.com/metacubex/http"
 	"github.com/metacubex/http/httptrace"
 )
 
-// pipelineMaxInFlight bounds the POSTs sent ahead of their responses. The
-// server puts packets that overtake each other back in order in a queue of
-// scMaxBufferedPosts, 30 by default; staying well below keeps it from
-// overflowing when requests travel over different connections.
-const pipelineMaxInFlight = 16
+// pipelineWindow bounds how far the POSTs run ahead of the oldest one that
+// has no response yet. The server puts packets that overtake each other back
+// in order in a queue of scMaxBufferedPosts, 30 by default, and answers a POST
+// as soon as the packet is queued; a window well below that keeps the queue
+// from overflowing while one POST is held up on its way.
+const pipelineWindow = 16
 
 // pipelinedWriter is the packet-up uploader of Xray-core (splithttp/dialer.go):
 // what is written while a POST is on its way is batched into the next one, and
@@ -39,15 +41,20 @@ type pipelinedWriter struct {
 	transport http.RoundTripper
 
 	multiplexed atomic.Bool // a response came over HTTP/2 or HTTP/3
-	inFlight    chan struct{}
 	posts       sync.WaitGroup
 	loopDone    chan struct{}
+	// onFail is called once when a POST fails: the stream is broken, and the
+	// reading side would otherwise wait for a server that waits for the packet.
+	onFail func()
 
-	mu     sync.Mutex
-	cond   sync.Cond
-	buf    []byte
-	err    error
-	closed bool
+	mu      sync.Mutex
+	cond    sync.Cond
+	buf     []byte
+	err     error
+	closed  bool
+	started bool            // the loop runs, from the first Write on
+	acked   uint64          // every POST below this number is answered
+	done    map[uint64]bool // answered POSTs from acked on
 }
 
 func newPipelinedWriter(w *PacketUpWriter) *pipelinedWriter {
@@ -59,17 +66,20 @@ func newPipelinedWriter(w *PacketUpWriter) *pipelinedWriter {
 		interval:  w.scMinPostsIntervalMs,
 		sessionID: w.sessionID,
 		transport: w.transport,
-		inFlight:  make(chan struct{}, pipelineMaxInFlight),
 		loopDone:  make(chan struct{}),
+		done:      map[uint64]bool{},
 	}
 	p.cond.L = &p.mu
-	go p.loop()
 	return p
 }
 
 func (p *pipelinedWriter) Write(b []byte) (int, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if !p.started && !p.closed { // nothing runs for a stream that never writes
+		p.started = true
+		go p.loop()
+	}
 	written := 0
 	for len(b) > 0 {
 		for len(p.buf) >= p.maxSize && p.err == nil && !p.closed {
@@ -95,11 +105,38 @@ func (p *pipelinedWriter) Write(b []byte) (int, error) {
 
 func (p *pipelinedWriter) fail(err error) {
 	p.mu.Lock()
-	if p.err == nil {
+	first := p.err == nil
+	if first {
 		p.err = err
+	}
+	onFail := p.onFail
+	p.mu.Unlock()
+	p.cond.Broadcast()
+	if first && onFail != nil {
+		onFail()
+	}
+}
+
+// answered records the response to a POST and moves the window on.
+func (p *pipelinedWriter) answered(seq uint64) {
+	p.mu.Lock()
+	p.done[seq] = true
+	for p.done[p.acked] {
+		delete(p.done, p.acked)
+		p.acked++
 	}
 	p.mu.Unlock()
 	p.cond.Broadcast()
+}
+
+// waitWindow waits until seq is within the window of the oldest unanswered POST.
+func (p *pipelinedWriter) waitWindow(seq uint64) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for seq-p.acked >= pipelineWindow && p.err == nil {
+		p.cond.Wait()
+	}
+	return p.err == nil
 }
 
 // next waits for data and takes all of it, at most maxSize.
@@ -120,6 +157,9 @@ func (p *pipelinedWriter) next() []byte {
 
 func (p *pipelinedWriter) loop() {
 	defer close(p.loopDone)
+	// the stream may end without Close, with the client it belongs to
+	stop := contextutils.AfterFunc(p.ctx, func() { p.fail(p.ctx.Err()) })
+	defer stop()
 	var seq uint64
 	var lastPost time.Time
 	for {
@@ -136,9 +176,7 @@ func (p *pipelinedWriter) loop() {
 		}
 		lastPost = time.Now()
 
-		select {
-		case p.inFlight <- struct{}{}:
-		case <-p.ctx.Done():
+		if !p.waitWindow(seq) {
 			return
 		}
 		wrote := make(chan struct{})
@@ -148,7 +186,6 @@ func (p *pipelinedWriter) loop() {
 		p.posts.Add(1)
 		go func(seq uint64) {
 			defer p.posts.Done()
-			defer func() { <-p.inFlight }()
 			defer signal()
 			ctx := p.ctx
 			if pipelined { // otherwise the next POST waits for this response
@@ -158,7 +195,9 @@ func (p *pipelinedWriter) loop() {
 			}
 			if err := p.post(ctx, seq, chunk); err != nil {
 				p.fail(err)
+				return
 			}
+			p.answered(seq)
 		}(seq)
 		seq++
 		select {
@@ -205,18 +244,21 @@ func (p *pipelinedWriter) post(ctx context.Context, seq uint64, data []byte) err
 func (p *pipelinedWriter) Close() error {
 	p.mu.Lock()
 	p.closed = true
+	started := p.started
 	p.mu.Unlock()
 	p.cond.Broadcast()
 
-	flushed := make(chan struct{})
-	go func() {
-		<-p.loopDone
-		p.posts.Wait()
-		close(flushed)
-	}()
-	select {
-	case <-flushed:
-	case <-time.After(time.Second):
+	if started {
+		flushed := make(chan struct{})
+		go func() {
+			<-p.loopDone
+			p.posts.Wait()
+			close(flushed)
+		}()
+		select {
+		case <-flushed:
+		case <-time.After(time.Second):
+		}
 	}
 	p.cancel()
 	httputils.CloseTransport(p.transport)

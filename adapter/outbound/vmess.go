@@ -675,7 +675,12 @@ func NewVmess(option VmessOption) (*Vmess, error) {
 				PrivateKey:        option.PrivateKey,
 				ClientFingerprint: option.ClientFingerprint,
 				ECH:               v.echConfig,
+				ShadowTLS:         v.shadowTLSConfig,
+				Restls:            v.restlsConfig,
+				JLS:               v.jlsConfig,
 				Reality:           v.realityConfig,
+				TLSMirror:         option.TLSMirrorOpts.Build(),
+				TLSMirrorDialer:   proxydialer.New(v, false).DialContext,
 			},
 		})
 		if err != nil {
