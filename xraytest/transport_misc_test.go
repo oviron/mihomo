@@ -1,49 +1,47 @@
-//go:build xray_parity
-
-package xrayparity
+package xraytest
 
 import "testing"
 
-func TestGRPC(t *testing.T) {
+func TestTransportGRPC(t *testing.T) {
 	grpc := func(settings, security string) string {
 		return `"network":"grpc","grpcSettings":{` + settings + `},` + security
 	}
-	runCases(t, []parityCase{
+	trRun(t, []trCase{
 		{
 			name:   "tls",
-			stream: grpc(`"serviceName":"gun"`, tlsServer),
-			client: tlsClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n",
+			stream: grpc(`"serviceName":"gun"`, trTLSServer),
+			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n",
 		},
 		{
 			name:   "reality",
-			stream: grpc(`"serviceName":"gun"`, realityServer),
-			client: realityClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n",
+			stream: grpc(`"serviceName":"gun"`, trRealityServer),
+			client: trRealityClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n",
 		},
 		{
 			name:   "multi-mode-server",
-			stream: grpc(`"serviceName":"gun","multiMode":true`, tlsServer),
-			client: tlsClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n",
+			stream: grpc(`"serviceName":"gun","multiMode":true`, trTLSServer),
+			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n",
 		},
 		{
 			name:   "custom-path",
-			stream: grpc(`"serviceName":"/api/v1/Stream|Multi"`, tlsServer),
-			client: tlsClient + "network: grpc\ngrpc-opts: {grpc-service-name: /api/v1/Stream}\n",
+			stream: grpc(`"serviceName":"/api/v1/Stream|Multi"`, trTLSServer),
+			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: /api/v1/Stream}\n",
 		},
 		{
 			name:   "service-name-to-escape",
 			gap:    "Xray escapes the service name, mihomo sends it as written; write it escaped",
-			stream: grpc(`"serviceName":"my gun"`, tlsServer),
-			client: tlsClient + "network: grpc\ngrpc-opts: {grpc-service-name: my gun}\n",
+			stream: grpc(`"serviceName":"my gun"`, trTLSServer),
+			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: my gun}\n",
 		},
 		{
 			name:   "service-name-escaped-by-hand",
-			stream: grpc(`"serviceName":"my gun"`, tlsServer),
-			client: tlsClient + "network: grpc\ngrpc-opts: {grpc-service-name: my%20gun}\n",
+			stream: grpc(`"serviceName":"my gun"`, trTLSServer),
+			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: my%20gun}\n",
 		},
 		{
 			name:   "keepalive-and-user-agent",
-			stream: grpc(`"serviceName":"gun","idle_timeout":10,"health_check_timeout":5`, tlsServer),
-			client: tlsClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun, grpc-user-agent: chrome, ping-interval: 10}\n",
+			stream: grpc(`"serviceName":"gun","idle_timeout":10,"health_check_timeout":5`, trTLSServer),
+			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun, grpc-user-agent: chrome, ping-interval: 10}\n",
 		},
 		{
 			name:   "plain",
@@ -53,12 +51,12 @@ func TestGRPC(t *testing.T) {
 	})
 }
 
-func TestWebSocket(t *testing.T) {
-	runCases(t, []parityCase{
+func TestTransportWebSocket(t *testing.T) {
+	trRun(t, []trCase{
 		{
 			name:   "tls",
-			stream: `"network":"ws","wsSettings":{"path":"/ws","host":"ws.example.org"},` + tlsServer,
-			client: tlsClient + "network: ws\nws-opts: {path: /ws, headers: {Host: ws.example.org}}\n",
+			stream: `"network":"ws","wsSettings":{"path":"/ws","host":"ws.example.org"},` + trTLSServer,
+			client: trTLSClient + "network: ws\nws-opts: {path: /ws, headers: {Host: ws.example.org}}\n",
 		},
 		{
 			name:   "plain-early-data",
@@ -67,45 +65,45 @@ func TestWebSocket(t *testing.T) {
 		},
 		{
 			name:   "early-data-options",
-			stream: `"network":"ws","wsSettings":{"path":"/ws"},` + tlsServer,
-			client: tlsClient + "network: ws\nws-opts: {path: /ws, max-early-data: 2048, early-data-header-name: Sec-WebSocket-Protocol}\n",
+			stream: `"network":"ws","wsSettings":{"path":"/ws"},` + trTLSServer,
+			client: trTLSClient + "network: ws\nws-opts: {path: /ws, max-early-data: 2048, early-data-header-name: Sec-WebSocket-Protocol}\n",
 		},
 		{
 			name:   "heartbeat-server",
-			stream: `"network":"ws","wsSettings":{"path":"/ws","heartbeatPeriod":1},` + tlsServer,
-			client: tlsClient + "network: ws\nws-opts: {path: /ws}\n",
+			stream: `"network":"ws","wsSettings":{"path":"/ws","heartbeatPeriod":1},` + trTLSServer,
+			client: trTLSClient + "network: ws\nws-opts: {path: /ws}\n",
 		},
 		{
 			name:   "utls-chrome",
-			stream: `"network":"ws","wsSettings":{"path":"/ws"},` + tlsServer,
-			client: tlsClient + "client-fingerprint: chrome\nnetwork: ws\nws-opts: {path: /ws}\n",
+			stream: `"network":"ws","wsSettings":{"path":"/ws"},` + trTLSServer,
+			client: trTLSClient + "client-fingerprint: chrome\nnetwork: ws\nws-opts: {path: /ws}\n",
 		},
 	})
 }
 
-func TestHTTPUpgrade(t *testing.T) {
-	runCases(t, []parityCase{
+func TestTransportHTTPUpgrade(t *testing.T) {
+	trRun(t, []trCase{
 		{
 			name:   "tls",
-			stream: `"network":"httpupgrade","httpupgradeSettings":{"path":"/up","host":"up.example.org"},` + tlsServer,
-			client: tlsClient + "network: ws\nws-opts: {path: /up, headers: {Host: up.example.org}, v2ray-http-upgrade: true}\n",
+			stream: `"network":"httpupgrade","httpupgradeSettings":{"path":"/up","host":"up.example.org"},` + trTLSServer,
+			client: trTLSClient + "network: ws\nws-opts: {path: /up, headers: {Host: up.example.org}, v2ray-http-upgrade: true}\n",
 		},
 		{
 			name:   "tls-early-data-fast-open",
-			stream: `"network":"httpupgrade","httpupgradeSettings":{"path":"/up?ed=2560"},` + tlsServer,
-			client: tlsClient + "network: ws\nws-opts: {path: /up, v2ray-http-upgrade: true, v2ray-http-upgrade-fast-open: true}\n",
+			stream: `"network":"httpupgrade","httpupgradeSettings":{"path":"/up?ed=2560"},` + trTLSServer,
+			client: trTLSClient + "network: ws\nws-opts: {path: /up, v2ray-http-upgrade: true, v2ray-http-upgrade-fast-open: true}\n",
 		},
 		{
 			name:   "tls-early-data-ed-in-path",
 			gap:    "ed in the path turns on the WebSocket early data header, HTTPUpgrade servers want the payload after the request",
-			stream: `"network":"httpupgrade","httpupgradeSettings":{"path":"/up?ed=2560"},` + tlsServer,
-			client: tlsClient + "network: ws\nws-opts: {path: \"/up?ed=2560\", v2ray-http-upgrade: true}\n",
+			stream: `"network":"httpupgrade","httpupgradeSettings":{"path":"/up?ed=2560"},` + trTLSServer,
+			client: trTLSClient + "network: ws\nws-opts: {path: \"/up?ed=2560\", v2ray-http-upgrade: true}\n",
 		},
 	})
 }
 
-func TestRAW(t *testing.T) {
-	runCases(t, []parityCase{
+func TestTransportRAW(t *testing.T) {
+	trRun(t, []trCase{
 		{
 			name:   "plain",
 			stream: `"network":"raw"`,
@@ -123,15 +121,15 @@ func TestRAW(t *testing.T) {
 		},
 		{
 			name:   "http-header-tls",
-			stream: `"network":"raw","rawSettings":{"header":{"type":"http","request":{"path":["/a"]}}},` + tlsServer,
-			client: tlsClient + "network: http\nhttp-opts: {path: [/a]}\n",
+			stream: `"network":"raw","rawSettings":{"header":{"type":"http","request":{"path":["/a"]}}},` + trTLSServer,
+			client: trTLSClient + "network: http\nhttp-opts: {path: [/a]}\n",
 		},
 	})
 }
 
-func TestMKCP(t *testing.T) {
+func TestTransportMKCP(t *testing.T) {
 	vmess := "type: vmess\nuuid: %UUID%\nalterId: 0\ncipher: auto\n"
-	runCases(t, []parityCase{
+	trRun(t, []trCase{
 		{
 			name:     "vmess-no-mask",
 			gap:      "mihomo always applies the legacy mKCP packet authenticator, Xray 26 has it as the mkcp-legacy mask only",
@@ -166,9 +164,9 @@ func TestMKCP(t *testing.T) {
 	})
 }
 
-func TestHysteria(t *testing.T) {
-	h3 := `"security":"tls","tlsSettings":{"alpn":["h3"],"certificates":[{"certificateFile":"/etc/xray/cert.pem","keyFile":"/etc/xray/key.pem"}]}`
-	runCases(t, []parityCase{
+func TestTransportHysteria(t *testing.T) {
+	h3 := `"security":"tls","tlsSettings":{"alpn":["h3"],"certificates":[{"certificateFile":"%CERT%","keyFile":"%KEY%"}]}`
+	trRun(t, []trCase{
 		{
 			name:     "hysteria2-outbound",
 			protocol: "hysteria",
@@ -178,7 +176,7 @@ func TestHysteria(t *testing.T) {
 		{
 			name:   "vless-over-hysteria",
 			stream: `"network":"hysteria","hysteriaSettings":{"version":2,"auth":"%UUID%"},` + h3,
-			client: tlsClient + "network: hysteria\n",
+			client: trTLSClient + "network: hysteria\n",
 			gap:    "no hysteria network for vless",
 		},
 	})
