@@ -1,8 +1,15 @@
 package xraytest
 
 import (
+	"io"
+	"net"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func trXHTTPServer(security, settings string) string {
@@ -321,4 +328,78 @@ xhttp-opts:
 		},
 	)
 	trRun(t, cases)
+}
+
+// trForwarder is a TCP forwarder to target that counts the bytes each way:
+// another address of the same server, as a CDN in front of it would be.
+type trForwarder struct {
+	port               int
+	toServer, toClient atomic.Int64
+	conns              atomic.Int64
+}
+
+func trForward(t *testing.T, target string) *trForwarder {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = l.Close() })
+	f := &trForwarder{port: l.Addr().(*net.TCPAddr).Port}
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			f.conns.Add(1)
+			go func() {
+				defer c.Close()
+				up, err := net.Dial("tcp", target)
+				if err != nil {
+					return
+				}
+				defer up.Close()
+				go func() {
+					n, _ := io.Copy(up, c)
+					f.toServer.Add(n)
+					_ = up.(*net.TCPConn).CloseWrite()
+				}()
+				n, _ := io.Copy(c, up)
+				f.toClient.Add(n)
+			}()
+		}
+	}()
+	return f
+}
+
+// The upload and the download leg of a stream reach one inbound by different
+// addresses: upload straight, download through another front. The data of each
+// direction must go its own way.
+func TestTransportXHTTPSplitLegs(t *testing.T) {
+	tg := startTargets(t)
+	const size = 3 << 20
+	for _, mode := range []string{"packet-up", "stream-up"} {
+		for _, security := range []string{"tls", "reality"} {
+			t.Run(mode+"-"+security, func(t *testing.T) {
+				server, client, target := trTLSServer, trTLSClient, 0
+				if security == "reality" {
+					server, client, target = trRealityServer, trRealityClient, trRealityTarget(t)
+				}
+				port := freePort(t)
+				trStartXray(t, trInbound(t, "vless", trFill(t, trXHTTPServer(server, ""), port, target), port))
+				front := trForward(t, net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+
+				proxy, err := trParseProxy(trFill(t, "type: vless\nuuid: %UUID%\n"+client+
+					"network: xhttp\nxhttp-opts: {path: /xh, mode: "+mode+", download-settings: {server: 127.0.0.1, port: "+strconv.Itoa(front.port)+"}}\n", port, target), port)
+				require.NoError(t, err)
+				defer proxy.Close()
+				require.NoError(t, trRoundTrip(proxy, tg, size, 30*time.Second))
+				_ = proxy.Close()
+				time.Sleep(200 * time.Millisecond) // let the forwarder count the tail
+
+				require.Greater(t, front.conns.Load(), int64(0), "nothing came through the download front")
+				require.Greater(t, front.toClient.Load(), int64(size), "the download did not come through its front")
+				require.Less(t, front.toServer.Load(), int64(size/4), "the upload went through the download front")
+			})
+		}
+	}
 }
