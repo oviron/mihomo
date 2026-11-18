@@ -26,6 +26,9 @@ const (
 	// maxH2Datagram bounds a DATAGRAM capsule: an IP packet with its context
 	// ID. A longer one is skipped.
 	maxH2Datagram = 1 << 16
+	// maxH2Control bounds any other capsule: the addresses and the routes
+	// the server assigns, a few dozen bytes each. A longer one is skipped.
+	maxH2Control = 1 << 16
 	// h2DatagramQueue is how many received packets wait for the reader
 	// before the next ones are dropped, as packets are on any full queue.
 	h2DatagramQueue = 256
@@ -162,6 +165,13 @@ func (s *h2CapsuleStream) split() error {
 		length, err := quicvarint.Read(reader)
 		if err != nil {
 			return err
+		}
+		if capsuleType != h2DatagramCapsuleType && length > maxH2Control {
+			// connect-ip-go keeps every address and route of a capsule in memory
+			if _, err = io.CopyN(io.Discard, reader, int64(length)); err != nil {
+				return err
+			}
+			continue
 		}
 		if capsuleType != h2DatagramCapsuleType {
 			// Passed on as it came; connect-ip-go skips the types it does not know.

@@ -153,3 +153,26 @@ func TestSettings(t *testing.T) {
 		require.Error(t, err, name)
 	}
 }
+
+// Closing the connection ends the noise that is being sent: a write must not
+// hold whoever closes for the length of the delays.
+func TestNoiseStopsOnClose(t *testing.T) {
+	sender, receiver := newConn(t, map[string]any{
+		"noise": []any{
+			map[string]any{"rand": 10, "delay": 30000},
+			map[string]any{"rand": 10},
+		},
+	})
+	done := make(chan struct{})
+	go func() {
+		_, _ = sender.WriteTo([]byte("data"), receiver.LocalAddr())
+		close(done)
+	}()
+	time.Sleep(100 * time.Millisecond) // the write is in its first delay
+	require.NoError(t, sender.Close())
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the write still waits for the delay of the noise")
+	}
+}

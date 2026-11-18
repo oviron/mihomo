@@ -184,6 +184,23 @@ end
 	require.Equal(t, "<opaque><opaque>", string(packets[2].packet), "no memory addresses")
 }
 
+// string.rep allocates its result at once, so the result is bounded.
+func TestScriptRepIsBounded(t *testing.T) {
+	packets, err := scriptPackets(t, `
+function HandleNoise(plan, address)
+	plan:Add(string.rep("ab", 3))
+	plan:Add(tostring(pcall(string.rep, "x", 2 ^ 30)))
+	plan:Add(tostring(pcall(string.rep, string.rep("x", 1024), 1025)))
+	plan:Add(tostring(#string.rep("x", 2 ^ 20)))
+end
+`)
+	require.NoError(t, err)
+	require.Equal(t, "ababab", string(packets[0].packet))
+	require.Equal(t, "false", string(packets[1].packet))
+	require.Equal(t, "false", string(packets[2].packet))
+	require.Equal(t, "1048576", string(packets[3].packet))
+}
+
 // The pattern functions work on inputs of a sane size and refuse the rest.
 func TestScriptPatternFunctions(t *testing.T) {
 	packets, err := scriptPackets(t, `

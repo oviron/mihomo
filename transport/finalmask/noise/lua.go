@@ -42,8 +42,10 @@ const (
 	// the process, and they don't notice the timeout. Their input is capped.
 	scriptPatternSubjectLimit = 16 * 1024
 	scriptPatternLimit        = 256
-	scriptRegistrySize        = 256
-	scriptPlanKey             = "finalmask.noise.plan"
+	// scriptRepLimit bounds the result of string.rep.
+	scriptRepLimit     = 1 << 20
+	scriptRegistrySize = 256
+	scriptPlanKey      = "finalmask.noise.plan"
 )
 
 func init() {
@@ -374,6 +376,19 @@ func newSandbox(options lua.Options) *lua.LState {
 			return L.GetTop()
 		}))
 	}
+	// string.rep builds its result in one allocation, past the instruction
+	// counting that stops a script
+	rep := stringLib.RawGetString("rep")
+	stringLib.RawSetString("rep", L.NewFunction(func(L *lua.LState) int {
+		if n := L.CheckInt(2); n > 0 && len(L.CheckString(1)) > scriptRepLimit/n {
+			L.RaiseError("string.rep makes a string of at most %d bytes", scriptRepLimit)
+			return 0
+		}
+		nargs := L.GetTop()
+		L.Insert(rep, 1)
+		L.Call(nargs, lua.MultRet)
+		return L.GetTop()
+	}))
 	format := stringLib.RawGetString("format")
 	stringLib.RawSetString("format", L.NewFunction(func(L *lua.LState) int {
 		nargs := L.GetTop()

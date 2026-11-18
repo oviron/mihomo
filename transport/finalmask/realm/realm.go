@@ -248,13 +248,18 @@ func (m *Mask) DialPacketConn(ctx context.Context, dialer mask.Dialer, dest neti
 		closeAll()
 		return nil, err
 	}
-	httpClient := &http.Client{Transport: &http.Transport{
-		DialContext:           dialer.DialContext,
-		TLSClientConfig:       m.tlsConfig.Clone(), // the transport changes its config
-		ForceAttemptHTTP2:     true,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: time.Second,
-	}}
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			DialContext:           dialer.DialContext,
+			TLSClientConfig:       m.tlsConfig.Clone(), // the transport changes its config
+			ForceAttemptHTTP2:     true,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: time.Second,
+		},
+		// the token goes to the server of the config and nowhere else: a
+		// redirect could take it to plain HTTP
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	defer httpClient.CloseIdleConnections()
 	control, err := realm.NewControlClient(m.serverURL, m.token, httpClient)
 	if err != nil {

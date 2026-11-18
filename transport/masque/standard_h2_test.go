@@ -82,22 +82,34 @@ func TestH2CapsuleStreamSend(t *testing.T) {
 	assert.ErrorIs(t, err, io.ErrClosedPipe)
 }
 
-// A DATAGRAM capsule too long to be a packet is skipped, an unknown capsule of
-// any length is passed on, and neither ends the tunnel.
+// A capsule too long to be a packet, or to be the addresses and routes of the
+// server, is skipped; an unknown capsule of a sane length is passed on, and
+// none of them ends the tunnel.
 func TestH2CapsuleStreamOversize(t *testing.T) {
 	var body bytes.Buffer
 	body.Write(capsule(0, make([]byte, maxH2Datagram+1)))
-	unknown := capsule(0x1234, make([]byte, 200000))
+	body.Write(capsule(1, make([]byte, maxH2Control+1)))
+	unknown := capsule(0x1234, make([]byte, 2000))
 	body.Write(unknown)
 	body.Write(capsule(0, []byte{0, 0x45, 7}))
 	s, _ := newTestCapsuleStream(io.NopCloser(&body))
-	go func() { _, _ = io.Copy(io.Discard, s) }()
+	control := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(s)
+		control <- b
+	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	datagram, err := s.ReceiveDatagram(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, []byte{0, 0x45, 7}, datagram)
+	select {
+	case b := <-control:
+		assert.Equal(t, unknown, b)
+	case <-time.After(time.Second):
+		t.Fatal("the control capsules did not end with the body")
+	}
 }
 
 // Packets that nobody reads are dropped; the control capsule behind them

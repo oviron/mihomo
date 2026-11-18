@@ -250,7 +250,7 @@ func parseSegment(key, arg string) (segment, error) {
 }
 
 func (m *Mask) WrapPacketConn(conn net.PacketConn, _ netip.AddrPort) (net.PacketConn, error) {
-	return &Conn{PacketConn: conn, mask: m, next: make(map[string]time.Time)}, nil
+	return &Conn{PacketConn: conn, mask: m, next: make(map[string]time.Time), closed: make(chan struct{})}, nil
 }
 
 // Conn sends the noise ahead of the packets written to it.
@@ -260,6 +260,36 @@ type Conn struct {
 	mu      sync.Mutex
 	next    map[string]time.Time // when the flow to an address counts as idle
 	counter atomic.Uint32
+
+	closeOnce sync.Once
+	closed    chan struct{}
+}
+
+// Close also ends the noise that is being sent: its delays hold the write
+// that started it, and whoever waits for that write.
+func (c *Conn) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return c.PacketConn.Close()
+}
+
+// pause waits between two noise packets; false when the connection was closed.
+func (c *Conn) pause(delay time.Duration) bool {
+	if delay <= 0 {
+		select {
+		case <-c.closed:
+			return false
+		default:
+			return true
+		}
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-c.closed:
+		return false
+	}
 }
 
 // maxNoiseSize is the largest datagram that can be sent.
@@ -293,14 +323,18 @@ func (c *Conn) sendNoise(addr net.Addr, key string) {
 		}
 		for _, packet := range packets {
 			_, _ = c.PacketConn.WriteTo(packet.packet, addr)
-			time.Sleep(packet.delay)
+			if !c.pause(packet.delay) {
+				return
+			}
 		}
 		return
 	}
 	for i := range c.mask.items {
 		it := &c.mask.items[i]
 		_, _ = c.PacketConn.WriteTo(c.build(it), addr)
-		time.Sleep(time.Duration(it.delay.Rand()) * time.Millisecond)
+		if !c.pause(time.Duration(it.delay.Rand()) * time.Millisecond) {
+			return
+		}
 	}
 }
 

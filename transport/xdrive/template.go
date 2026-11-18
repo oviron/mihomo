@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	neturl "net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -227,13 +228,13 @@ func (s *templateStorage) accessToken(ctx context.Context) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.tmpl.Auth.TokenURL,
 		strings.NewReader(values.String()))
 	if err != nil {
-		return "", fmt.Errorf("failed to build the token request: %w", err)
+		return "", fmt.Errorf("failed to build the token request: %w", withoutURL(err))
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch the token: %w", err)
+		return "", fmt.Errorf("failed to fetch the token: %w", withoutURL(err))
 	}
 	defer resp.Body.Close()
 	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -316,7 +317,7 @@ func (s *templateStorage) do(ctx context.Context, op *opTemplate, vars map[strin
 		}
 		req, err := http.NewRequestWithContext(ctx, method, url, reader)
 		if err != nil {
-			return 0, nil, fmt.Errorf("failed to build request: %w", err)
+			return 0, nil, fmt.Errorf("failed to build request: %w", withoutURL(err))
 		}
 		for k, v := range authHeaders {
 			req.Header.Set(k, v)
@@ -336,10 +337,10 @@ func (s *templateStorage) do(ctx context.Context, op *opTemplate, vars map[strin
 			if ctx.Err() != nil {
 				return 0, nil, ctx.Err()
 			}
-			lastErr = fmt.Errorf("request failed: %w", err)
+			lastErr = fmt.Errorf("request failed: %w", withoutURL(err))
 			continue
 		}
-		payload, err := io.ReadAll(resp.Body)
+		payload, err := io.ReadAll(io.LimitReader(resp.Body, templateResponseLimit+1))
 		resp.Body.Close()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -347,6 +348,9 @@ func (s *templateStorage) do(ctx context.Context, op *opTemplate, vars map[strin
 			}
 			lastErr = fmt.Errorf("failed to read response: %w", err)
 			continue
+		}
+		if len(payload) > templateResponseLimit {
+			return 0, nil, errors.New("the response exceeds the size limit")
 		}
 
 		if resp.StatusCode == http.StatusUnauthorized && s.tmpl.Auth.Type == "oauth2" && !op.presigned {
@@ -362,6 +366,20 @@ func (s *templateStorage) do(ctx context.Context, op *opTemplate, vars map[strin
 	}
 	return 0, nil, lastErr
 }
+
+// withoutURL drops the URL from an error of the HTTP client or of the URL
+// parser: it may carry a signature or a token in its query.
+func withoutURL(err error) error {
+	var urlErr *neturl.Error
+	if errors.As(err, &urlErr) {
+		return urlErr.Err
+	}
+	return err
+}
+
+// templateResponseLimit bounds what is read of one response: a segment,
+// which a service may wrap in base64 and JSON, or a page of a listing.
+const templateResponseLimit = 4*maxSegmentBytes + 1<<20
 
 // run performs op, following its href when the operation is two-step.
 func (s *templateStorage) run(ctx context.Context, op *opTemplate, vars map[string]string, body []byte) (int, []byte, error) {
