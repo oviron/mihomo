@@ -372,7 +372,11 @@ func (s *templateStorage) do(ctx context.Context, op *opTemplate, vars map[strin
 func withoutURL(err error) error {
 	var urlErr *neturl.Error
 	if errors.As(err, &urlErr) {
-		return urlErr.Err
+		err = urlErr.Err
+	}
+	// the HTTP client quotes a Location header it can't parse
+	if err != nil && strings.Contains(err.Error(), "Location") {
+		return errors.New("the service sent a redirect that can't be followed")
 	}
 	return err
 }

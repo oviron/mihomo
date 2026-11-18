@@ -62,6 +62,8 @@ type vlessReverse struct {
 
 	mu      sync.Mutex
 	workers []*vlessReverseWorker
+
+	udpSources atomic.Int32 // source addresses of UDP sessions, held or resting
 }
 
 func newVlessReverse(proxy *Vless, option VlessReverseOption, tunnel C.Tunnel) (*vlessReverse, error) {
@@ -232,6 +234,11 @@ type vlessReverseWorker struct {
 // association lives (a minute), and the next owner must not inherit that.
 const vlessReverseSourceRest = 3 * time.Minute
 
+// vlessReverseMaxSources bounds the source addresses the UDP sessions of one
+// bridge hold, the resting ones included: the addresses are shared by all
+// bridges, and one server must not use them up.
+const vlessReverseMaxSources = 4096
+
 // vlessReverseSources hands out the source addresses of the sessions of all
 // bridges. The server names the real source, but nothing here may trust it:
 // an address of this network would match rules meant for local devices and
@@ -240,48 +247,52 @@ const vlessReverseSourceRest = 3 * time.Minute
 var vlessReverseSources = struct {
 	sync.Mutex
 	next uint16
-	used map[uint16]time.Time // the zero time while in use, then when the port is free again
-}{used: make(map[uint16]time.Time)}
+	used map[uint16]struct{}
+}{used: make(map[uint16]struct{})}
 
 func acquireVlessReverseSource() *net.UDPAddr {
 	s := &vlessReverseSources
 	s.Lock()
 	defer s.Unlock()
 	if len(s.used) >= 65535 {
-		now := time.Now()
-		for port, free := range s.used {
-			if !free.IsZero() && now.After(free) {
-				delete(s.used, port)
-			}
-		}
-		if len(s.used) >= 65535 {
-			return nil
-		}
+		return nil
 	}
 	for {
 		s.next++
-		if s.next == 0 {
-			continue
-		}
-		free, taken := s.used[s.next]
-		if !taken || !free.IsZero() && time.Now().After(free) {
+		if _, taken := s.used[s.next]; s.next != 0 && !taken {
 			break
 		}
 	}
-	s.used[s.next] = time.Time{}
+	s.used[s.next] = struct{}{}
 	return &net.UDPAddr{IP: net.IPv4(192, 0, 2, 1), Port: int(s.next)}
 }
 
-// releaseVlessReverseSource gives a source address back, after rest.
-func releaseVlessReverseSource(source *net.UDPAddr, rest time.Duration) {
-	s := &vlessReverseSources
-	s.Lock()
-	defer s.Unlock()
-	if rest <= 0 {
-		delete(s.used, uint16(source.Port))
-		return
+func releaseVlessReverseSource(source *net.UDPAddr) {
+	vlessReverseSources.Lock()
+	delete(vlessReverseSources.used, uint16(source.Port))
+	vlessReverseSources.Unlock()
+}
+
+// udpSource takes a source address for a destination of a UDP session, nil
+// when the bridge holds too many.
+func (r *vlessReverse) udpSource() *net.UDPAddr {
+	if r.udpSources.Add(1) > vlessReverseMaxSources {
+		r.udpSources.Add(-1)
+		return nil
 	}
-	s.used[uint16(source.Port)] = time.Now().Add(rest)
+	source := acquireVlessReverseSource()
+	if source == nil {
+		r.udpSources.Add(-1)
+	}
+	return source
+}
+
+// restUDPSource gives the address back once it has rested.
+func (r *vlessReverse) restUDPSource(source *net.UDPAddr) {
+	time.AfterFunc(vlessReverseSourceRest, func() {
+		releaseVlessReverseSource(source)
+		r.udpSources.Add(-1)
+	})
 }
 
 func (w *vlessReverseWorker) additions(source net.Addr) []inbound.Addition {
@@ -301,11 +312,14 @@ func (w *vlessReverseWorker) NewStream(conn net.Conn, meta muxcool.Metadata) {
 		return
 	}
 	source := acquireVlessReverseSource()
-	if source == nil {
+	if source == nil || !w.reverse.installed() { // not under the rules of another configuration
 		_ = conn.Close()
+		if source != nil {
+			releaseVlessReverseSource(source)
+		}
 		return
 	}
-	defer releaseVlessReverseSource(source, 0)
+	defer releaseVlessReverseSource(source)
 	w.reverse.tunnel.HandleTCPConn(inbound.NewSocket(target, conn, C.VLESS, w.additions(source)...))
 }
 
@@ -328,7 +342,7 @@ func (w *vlessReverseWorker) NewPacket(conn net.PacketConn, meta muxcool.Metadat
 			if nat != nil {
 				nat.Delete(source.String())
 			}
-			releaseVlessReverseSource(source, vlessReverseSourceRest)
+			w.reverse.restUDPSource(source)
 		}
 	}()
 	buf := make([]byte, muxcool.MaxPayload)
@@ -344,10 +358,10 @@ func (w *vlessReverseWorker) NewPacket(conn net.PacketConn, meta muxcool.Metadat
 		}
 		source := sources[destination]
 		if source == nil {
-			if len(sources) >= vlessReverseMaxTargets {
+			if len(sources) >= vlessReverseMaxTargets || !w.reverse.installed() {
 				continue
 			}
-			if source = acquireVlessReverseSource(); source == nil {
+			if source = w.reverse.udpSource(); source == nil {
 				continue
 			}
 			sources[destination] = source
