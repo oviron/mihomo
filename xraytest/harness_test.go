@@ -78,7 +78,9 @@ func (x *xray) count(substr string) int {
 	return strings.Count(x.log.String(), substr)
 }
 
-// waitFor waits until cond holds for the debug log, which Xray writes with a delay.
+// waitFor waits until cond holds for the debug log, which Xray writes with a
+// delay. Xray drops log lines when it logs faster than they are written out,
+// so a check of the log belongs before a bulk transfer through a logging path.
 func (x *xray) waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)

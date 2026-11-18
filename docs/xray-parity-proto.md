@@ -52,3 +52,47 @@ long as the server keeps the flow (one minute after it went idle).
 
 Use a different key on every installation: the server treats a second flow
 with the same GlobalID as a reconnect of the first one.
+
+## Mux.Cool
+
+### `mux`
+
+```yaml
+- name: vless-xhttp
+  type: vless
+  # ...
+  mux:
+    enabled: true
+    concurrency: 0            # sessions per connection; 0 = 128
+    xudp-concurrency: 0       # > 0: UDP gets connections of its own; < 0: UDP is not multiplexed
+    xudp-proxy-udp443: reject # reject | allow | skip
+```
+
+Mux.Cool is the multiplexing every Xray inbound accepts: many TCP streams and
+UDP associations travel in one connection to the server, addressed to
+`v1.mux.cool`. The server needs no setting for it. `mux` works on `vless`,
+`vmess`, `trojan`, `ss`, `socks5` and `http` proxies and is not compatible
+with `smux` (sing-mux), which an Xray server does not speak.
+
+- `concurrency`: how many sessions share one connection before the next one
+  is opened. Xray-core v26.11.9 turns every value from 0 to 128 into 128; here
+  0 means 128 and a smaller positive value is honoured. A negative value
+  leaves TCP alone. A connection is retired after 1024 sessions and closed
+  after 16–32 seconds without one, as in Xray.
+- `xudp-concurrency`: 0 puts UDP on the same connections as TCP, a positive
+  value gives UDP its own connections with that many sessions each, a negative
+  value leaves UDP to the proxy's own transport (XUDP for VLESS and VMess).
+- `xudp-proxy-udp443`: what happens to UDP port 443 (QUIC). `reject` is Xray's
+  default and makes browsers fall back to TCP; `skip` hands it to the proxy's
+  own UDP; `allow` multiplexes it.
+
+UDP sessions carry the XUDP GlobalID, so they are full cone and survive a
+reconnect like plain XUDP.
+
+With `flow: xtls-rprx-vision` the server takes no TCP in Mux.Cool. There `mux`
+changes nothing but the UDP/443 rule: TCP stays on Vision and UDP on XUDP.
+
+Mux.Cool has no flow control. A session that is not read holds back the other
+sessions of its connection; a connection whose peer reads nothing for a minute
+is dropped. A half-closed stream ends the session in both directions, as it
+does between two Xray instances.

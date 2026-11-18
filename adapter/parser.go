@@ -245,6 +245,23 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 		}
 	}
 
+	if muxMapping, muxExist := mapping["mux"].(map[string]any); muxExist {
+		muxOption := &outbound.MuxCoolOption{}
+		err = decoder.Decode(muxMapping, muxOption)
+		if err != nil {
+			return nil, err
+		}
+		if muxOption.Enabled {
+			if _, isSingMux := proxy.(*outbound.SingMux); isSingMux {
+				return nil, fmt.Errorf("mux and smux cannot be used together")
+			}
+			proxy, err = outbound.NewMuxCool(*muxOption, proxy)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	proxy = outbound.NewAutoCloseProxyAdapter(proxy)
 	return NewProxy(proxy), nil
 }
