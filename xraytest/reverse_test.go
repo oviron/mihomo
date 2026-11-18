@@ -162,6 +162,7 @@ func TestVlessReverse(t *testing.T) {
 			seen := tunnel.seen()
 			require.NotEmpty(t, seen)
 			var tcp, udp bool
+			destinations := map[uint16]string{} // of a UDP source
 			for _, metadata := range seen {
 				require.Equal(t, "from-server", metadata.InName)
 				require.Equal(t, C.VLESS, metadata.Type)
@@ -169,7 +170,17 @@ func TestVlessReverse(t *testing.T) {
 				require.Equal(t, "192.0.2.1", metadata.SrcIP.String())
 				tcp = tcp || metadata.NetWork == C.TCP
 				udp = udp || metadata.NetWork == C.UDP
+				if metadata.NetWork == C.UDP {
+					// the rules are asked once per source: a source must not
+					// reach a second destination on the answer for the first
+					destination := metadata.RemoteAddress()
+					if first, ok := destinations[metadata.SrcPort]; ok {
+						require.Equal(t, first, destination, "one source, one destination")
+					}
+					destinations[metadata.SrcPort] = destination
+				}
 			}
+			require.Greater(t, len(destinations), 1)
 			require.True(t, tcp && udp, "both TCP and UDP must come out at the bridge")
 			require.Equal(t, 1, x.count("tcp:v1.rvs.cool"), "one reverse connection is enough for this load")
 		})

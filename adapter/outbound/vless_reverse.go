@@ -40,6 +40,10 @@ const (
 	// ones included: the server decides how long those live.
 	vlessReverseMaxWorkers = 8
 
+	// vlessReverseMaxTargets bounds the destinations of one UDP session, each
+	// of which is an association of its own to the tunnel.
+	vlessReverseMaxTargets = 64
+
 	// vlessReverseControl is the destination of the session the server keeps
 	// for its heartbeats.
 	vlessReverseControl = "reverse"
@@ -88,9 +92,35 @@ func (r *vlessReverse) close() {
 	}
 }
 
-// monitor keeps enough connections to the server. Like Xray-core it waits a
-// moment first, so that a configuration that is still being loaded and gets
-// rejected does not connect.
+// installed reports whether the proxy of the bridge is the one the tunnel
+// runs with. A configuration that is still being loaded may be rejected, and
+// one that was replaced must stop letting the server in: neither may serve
+// connections under the rules of another configuration.
+func (r *vlessReverse) installed() bool {
+	tunnel, ok := r.tunnel.(interface{ Proxies() map[string]C.Proxy })
+	if !ok {
+		return true // a tunnel that keeps no proxies
+	}
+	proxy := tunnel.Proxies()[r.proxy.Name()]
+	if proxy == nil {
+		return false
+	}
+	adapter := proxy.Adapter()
+	for {
+		switch a := adapter.(type) {
+		case *autoCloseProxyAdapter:
+			adapter = a.ProxyAdapter
+		case *MuxCool:
+			adapter = a.ProxyAdapter
+		case *SingMux:
+			adapter = a.ProxyAdapter
+		default:
+			return adapter == C.ProxyAdapter(r.proxy)
+		}
+	}
+}
+
+// monitor keeps enough connections to the server while the proxy is in use.
 func (r *vlessReverse) monitor() {
 	ticker := time.NewTicker(vlessReverseInterval)
 	defer ticker.Stop()
@@ -105,6 +135,16 @@ func (r *vlessReverse) monitor() {
 }
 
 func (r *vlessReverse) check() {
+	if !r.installed() {
+		r.mu.Lock()
+		workers := r.workers
+		r.workers = nil
+		r.mu.Unlock()
+		for _, w := range workers {
+			_ = w.carrier.Close()
+		}
+		return
+	}
 	r.mu.Lock()
 	alive := r.workers[:0]
 	active, sessions := 0, 0
@@ -141,7 +181,7 @@ func (r *vlessReverse) check() {
 		return
 	}
 	r.mu.Lock()
-	if r.ctx.Err() != nil {
+	if r.ctx.Err() != nil || !r.installed() { // the proxy was closed or replaced during the dial
 		r.mu.Unlock()
 		_ = w.carrier.Close()
 		return
@@ -186,15 +226,62 @@ type vlessReverseWorker struct {
 	heard    atomic.Int64  // when the server was last heard, in unix nanoseconds
 }
 
-// vlessReverseSource numbers the sessions of all bridges.
-var vlessReverseSource atomic.Uint32
+// vlessReverseSourceRest is how long the source address of a UDP association
+// stays unused after its session: the tunnel may keep what it knows about
+// the address, the outbound picked for it above all, for as long as an idle
+// association lives (a minute), and the next owner must not inherit that.
+const vlessReverseSourceRest = 3 * time.Minute
 
-// source makes up the source address of a session. The server names the real
-// one, but nothing here may trust it: an address of this network would match
-// rules meant for local devices and processes. 192.0.2.0/24 is reserved for
-// documentation and belongs to nobody; the port keeps the sessions apart.
-func (w *vlessReverseWorker) source() *net.UDPAddr {
-	return &net.UDPAddr{IP: net.IPv4(192, 0, 2, 1), Port: int(vlessReverseSource.Add(1)%65535) + 1}
+// vlessReverseSources hands out the source addresses of the sessions of all
+// bridges. The server names the real source, but nothing here may trust it:
+// an address of this network would match rules meant for local devices and
+// processes. 192.0.2.0/24 is reserved for documentation and belongs to
+// nobody; the port keeps the sessions apart, so one in use is not given twice.
+var vlessReverseSources = struct {
+	sync.Mutex
+	next uint16
+	used map[uint16]time.Time // the zero time while in use, then when the port is free again
+}{used: make(map[uint16]time.Time)}
+
+func acquireVlessReverseSource() *net.UDPAddr {
+	s := &vlessReverseSources
+	s.Lock()
+	defer s.Unlock()
+	if len(s.used) >= 65535 {
+		now := time.Now()
+		for port, free := range s.used {
+			if !free.IsZero() && now.After(free) {
+				delete(s.used, port)
+			}
+		}
+		if len(s.used) >= 65535 {
+			return nil
+		}
+	}
+	for {
+		s.next++
+		if s.next == 0 {
+			continue
+		}
+		free, taken := s.used[s.next]
+		if !taken || !free.IsZero() && time.Now().After(free) {
+			break
+		}
+	}
+	s.used[s.next] = time.Time{}
+	return &net.UDPAddr{IP: net.IPv4(192, 0, 2, 1), Port: int(s.next)}
+}
+
+// releaseVlessReverseSource gives a source address back, after rest.
+func releaseVlessReverseSource(source *net.UDPAddr, rest time.Duration) {
+	s := &vlessReverseSources
+	s.Lock()
+	defer s.Unlock()
+	if rest <= 0 {
+		delete(s.used, uint16(source.Port))
+		return
+	}
+	s.used[uint16(source.Port)] = time.Now().Add(rest)
 }
 
 func (w *vlessReverseWorker) additions(source net.Addr) []inbound.Addition {
@@ -213,7 +300,13 @@ func (w *vlessReverseWorker) NewStream(conn net.Conn, meta muxcool.Metadata) {
 		_ = conn.Close()
 		return
 	}
-	w.reverse.tunnel.HandleTCPConn(inbound.NewSocket(target, conn, C.VLESS, w.additions(w.source())...))
+	source := acquireVlessReverseSource()
+	if source == nil {
+		_ = conn.Close()
+		return
+	}
+	defer releaseVlessReverseSource(source, 0)
+	w.reverse.tunnel.HandleTCPConn(inbound.NewSocket(target, conn, C.VLESS, w.additions(source)...))
 }
 
 // NewPacket implements muxcool.Handler
@@ -225,20 +318,42 @@ func (w *vlessReverseWorker) NewPacket(conn net.PacketConn, meta muxcool.Metadat
 		return
 	}
 
-	source := w.source()
-	additions := w.additions(source)
+	// Every destination of the session gets a source of its own. The tunnel
+	// picks the outbound by the rules once per source, and the server must
+	// not reach a second destination on the decision made for the first.
+	sources := make(map[string]*net.UDPAddr)
+	defer func() {
+		nat := w.reverse.tunnel.NatTable()
+		for _, source := range sources {
+			if nat != nil {
+				nat.Delete(source.String())
+			}
+			releaseVlessReverseSource(source, vlessReverseSourceRest)
+		}
+	}()
 	buf := make([]byte, muxcool.MaxPayload)
 	for {
 		n, to, err := conn.ReadFrom(buf)
 		if err != nil {
 			return
 		}
-		target := socks5.ParseAddr(to.String())
+		destination := to.String()
+		target := socks5.ParseAddr(destination)
 		if target == nil {
 			continue
 		}
+		source := sources[destination]
+		if source == nil {
+			if len(sources) >= vlessReverseMaxTargets {
+				continue
+			}
+			if source = acquireVlessReverseSource(); source == nil {
+				continue
+			}
+			sources[destination] = source
+		}
 		packet := &vlessReversePacket{conn: conn, data: append([]byte(nil), buf[:n]...), source: source}
-		w.reverse.tunnel.HandleUDPPacket(inbound.NewPacket(target, packet, C.VLESS, additions...))
+		w.reverse.tunnel.HandleUDPPacket(inbound.NewPacket(target, packet, C.VLESS, w.additions(source)...))
 	}
 }
 

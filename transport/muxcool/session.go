@@ -266,12 +266,12 @@ func (c *Carrier) readFrame(reader *bufio.Reader) error {
 		}
 	}
 	var s *session
-	var accepted bool
+	var accepted, refused bool
 	switch meta.Status {
 	case StatusNew:
 		if c.handler != nil {
 			s = c.accept(&meta)
-			accepted = s != nil
+			accepted, refused = s != nil, s == nil
 		}
 	case StatusKeep:
 		s = c.lookup(meta.SessionID)
@@ -284,6 +284,9 @@ func (c *Carrier) readFrame(reader *bufio.Reader) error {
 		defer c.serve(s, meta) // after the payload of the frame is in the session
 	}
 	if !meta.HasData() {
+		if refused {
+			return c.writeFrame(&Metadata{SessionID: meta.SessionID, Status: StatusEnd}, nil)
+		}
 		return nil
 	}
 	if s == nil {
@@ -292,8 +295,9 @@ func (c *Carrier) readFrame(reader *bufio.Reader) error {
 		if _, err = reader.Discard(payloadLen); err != nil {
 			return err
 		}
-		if meta.Status == StatusKeep {
-			// tell the peer to close the session it still feeds
+		if meta.Status == StatusKeep || refused {
+			// tell the peer to close the session it still feeds, or the one
+			// that was not taken
 			return c.writeFrame(&Metadata{SessionID: meta.SessionID, Status: StatusEnd}, nil)
 		}
 		return nil

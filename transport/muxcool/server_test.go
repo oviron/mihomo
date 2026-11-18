@@ -198,3 +198,41 @@ func TestCarrierWriteDeadlineCleared(t *testing.T) {
 	require.False(t, carrier.Closed())
 	echo(t, conn, 10)
 }
+
+// A peer may not keep more sessions than maxAcceptedSessions open: the next
+// one is refused with an end frame, and taken again once there is room.
+func TestServerCarrierSessionLimit(t *testing.T) {
+	local, remote := net.Pipe()
+	handler := &echoHandler{}
+	client := NewCarrier(local, Limits{})
+	server := NewServerCarrier(remote, handler, false)
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = server.Close()
+	})
+
+	conns := make([]net.Conn, 0, maxAcceptedSessions)
+	for i := 0; i < maxAcceptedSessions; i++ {
+		conn, err := client.OpenStream(socksaddr("example.org:443"))
+		require.NoError(t, err)
+		_, err = conn.Write([]byte{1})
+		require.NoError(t, err)
+		conns = append(conns, conn)
+	}
+	require.Eventually(t, func() bool { return server.Sessions() == maxAcceptedSessions }, 5*time.Second, time.Millisecond)
+
+	refused, err := client.OpenStream(socksaddr("example.org:443"))
+	require.NoError(t, err)
+	_, err = refused.Write([]byte{1})
+	require.NoError(t, err)
+	require.NoError(t, refused.SetReadDeadline(time.Now().Add(5*time.Second)))
+	_, err = refused.Read(make([]byte, 1))
+	require.ErrorIs(t, err, io.EOF, "the server ends the session it did not take")
+	assert.Equal(t, maxAcceptedSessions, server.Sessions())
+
+	require.NoError(t, conns[0].Close())
+	require.Eventually(t, func() bool { return server.Sessions() == maxAcceptedSessions-1 }, 5*time.Second, time.Millisecond)
+	conn, err := client.OpenStream(socksaddr("example.org:443"))
+	require.NoError(t, err)
+	echo(t, conn, 10)
+}

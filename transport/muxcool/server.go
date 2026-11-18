@@ -37,8 +37,14 @@ func NewServerCarrier(conn net.Conn, handler Handler, reverse bool) *Carrier {
 	return c
 }
 
+// maxAcceptedSessions bounds the sessions a peer may keep open on one
+// carrier. An Xray-core portal retires a connection after 256 sessions in
+// all, so nothing well-behaved comes near it.
+const maxAcceptedSessions = 512
+
 // accept registers a session the peer opened. A session that still has the
-// ID is over as far as the peer is concerned.
+// ID is over as far as the peer is concerned. It returns nil when the carrier
+// has failed or holds too many sessions already.
 func (c *Carrier) accept(meta *Metadata) *session {
 	c.mu.Lock()
 	old := c.sessions[meta.SessionID]
@@ -50,7 +56,7 @@ func (c *Carrier) accept(meta *Metadata) *session {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.err != nil {
+	if c.err != nil || len(c.sessions) >= maxAcceptedSessions {
 		return nil
 	}
 	s := &session{

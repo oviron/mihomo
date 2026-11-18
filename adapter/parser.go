@@ -254,14 +254,18 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 		muxOption := &outbound.MuxCoolOption{}
 		err = decoder.Decode(muxMapping, muxOption)
 		if err != nil {
+			_ = proxy.Close()
 			return nil, err
 		}
 		if muxOption.Enabled {
 			if _, isSingMux := proxy.(*outbound.SingMux); isSingMux {
+				_ = proxy.Close()
 				return nil, fmt.Errorf("mux and smux cannot be used together")
 			}
-			proxy, err = outbound.NewMuxCool(*muxOption, proxy)
+			inner := proxy
+			proxy, err = outbound.NewMuxCool(*muxOption, inner)
 			if err != nil {
+				_ = inner.Close()
 				return nil, err
 			}
 		}
