@@ -242,6 +242,12 @@ What to know before turning it on:
 - the source address of these connections is always `192.0.2.1` (a reserved
   documentation address), never the one the server reports: a reported address
   could match rules meant for local devices and processes;
+- every destination of a UDP session is an association of its own, so the
+  rules are asked for each of them; UDP through the bridge is not full cone,
+  and a session reaches at most 64 destinations;
+- the bridge connects only while its proxy is part of the running config: not
+  for a config that failed to load, and its connections are closed within
+  seconds after a reload dropped or replaced the proxy;
 - a proxy that comes from a provider (a subscription) cannot use `reverse`;
 - the proxy is for the bridge only. Xray rejects ordinary connections of an
   account that has `reverse`.
@@ -269,7 +275,7 @@ block is the client side for the proxies that have no transport options of
 their own; it takes the option names of VLESS (`tls`, `alpn`, `servername`,
 `skip-cert-verify`, `fingerprint`, `client-fingerprint`, `ech-opts`,
 `reality-opts`, `ws-opts`, `grpc-opts`, `xhttp-opts`, `mkcp-opts`). VLESS,
-VMess and Trojan keep their own options.
+VMess and Trojan keep their own options and refuse the block.
 
 Only the TCP side goes over the transport, as on the server: such a proxy is
 set up without `udp`. The security belongs in the block, not in the `tls`
@@ -448,7 +454,8 @@ What goes with it:
   that key is absent. The realm rendezvous server of Hysteria 2 is dialed
   without them.
 - With `stream-settings` the masks stay the last layer before the wire, under
-  the transport.
+  the transport; a connection that does not go to the proxy's server leaves
+  out both.
 - `xicmp` opens ICMP sockets, not through the proxy's dialer: a proxy with it
   can't have `dialer-proxy`, `interface-name` or `routing-mark`. UDP masks can't
   be combined with `realm-opts` of the hysteria2 outbound, and `udphop`,
@@ -493,6 +500,10 @@ v1.1.1 (later versions need a newer Go than `go.mod` declares).
 - `random` over REALITY with `support-x25519mlkem768` never picks `ios`.
 - `download-settings.reuse-settings` works without `reuse-settings` of the
   upload leg.
+- `grpc-user-agent: chrome` (`firefox`, `edge`, `golang`) and
+  `User-Agent: chrome` (`firefox`, `safari`, `edge`, `curl`, `golang`) in
+  `ws-opts.headers` are the browser names of Xray-core; they used to be sent as
+  the literal value.
 - `type: masque` without `private-key` and `public-key` used to be a config
   error and is now the standard MASQUE client.
 - The SOCKS5 outbound fails a request the server rejected; the reply code
