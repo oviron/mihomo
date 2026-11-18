@@ -2,6 +2,7 @@ package finalmask
 
 // The masks register themselves.
 import (
+	_ "github.com/metacubex/mihomo/transport/finalmask/custom"
 	_ "github.com/metacubex/mihomo/transport/finalmask/fragment"
 	_ "github.com/metacubex/mihomo/transport/finalmask/mkcplegacy"
 	_ "github.com/metacubex/mihomo/transport/finalmask/noise"

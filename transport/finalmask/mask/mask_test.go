@@ -74,7 +74,8 @@ func TestParseBytes(t *testing.T) {
 		{nil, "", nil},
 		{[]any{1, 2, 255}, "", []byte{1, 2, 255}},
 		{[]any{1.0, uint8(2)}, "array", []byte{1, 2}},
-		{"aGk=", "", []byte("hi")}, // what encoding/json takes for a []byte
+		{[]any{nil, 1}, "", []byte{0, 1}}, // a null is a zero byte for encoding/json
+		{"aGk=", "", []byte("hi")},        // what encoding/json takes for a []byte
 		{"hello", "str", []byte("hello")},
 		{"C0ffEE", "hex", []byte{0xc0, 0xff, 0xee}},
 		{"aGk=", "BASE64", []byte("hi")},

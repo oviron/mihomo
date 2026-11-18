@@ -172,6 +172,9 @@ func ParseBytes(value any, typ string) ([]byte, error) {
 		case []any:
 			out := make([]byte, len(v))
 			for i, item := range v {
+				if item == nil {
+					continue // a null is a zero byte, as encoding/json reads it
+				}
 				n, err := toInt(item)
 				if err != nil || n < 0 || n > 255 {
 					return nil, fmt.Errorf("packet[%d] is not a byte: %v", i, item)
