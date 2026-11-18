@@ -3,6 +3,8 @@ package xraytest
 import (
 	"strings"
 	"testing"
+
+	tlsC "github.com/metacubex/mihomo/component/tls"
 )
 
 func trRawServer(security string) string {
@@ -80,6 +82,36 @@ func TestTransportREALITY(t *testing.T) {
 			client: fingerprint(name),
 			gap:    "this ClientHello has no X25519MLKEM768 key share",
 		})
+	}
+	if tlsC.MLDSA65Supported {
+		otherVerify := trField(t, trXrayTool(t, "mldsa65"), "Verify")
+		cases = append(cases,
+			trCase{
+				name:      "mldsa65-verify",
+				stream:    trRawServer(withOpt(`,"mldsa65Seed":"%SEED%"`)),
+				client:    trRealityClient + "  mldsa65-verify: %VERIFY%\n",
+				serverLog: "is using ML-DSA-65 for cert's extra signature: true",
+			},
+			trCase{
+				name:   "mldsa65-verify-xhttp",
+				stream: trXHTTPServer(withOpt(`,"mldsa65Seed":"%SEED%"`), ""),
+				client: trRealityClient + "  mldsa65-verify: %VERIFY%\nnetwork: xhttp\nxhttp-opts: {path: /xh}\n",
+			},
+			trCase{
+				name:   "mldsa65-verify-foreign-key",
+				stream: trRawServer(withOpt(`,"mldsa65Seed":"%SEED%"`)),
+				client: trRealityClient + "  mldsa65-verify: " + otherVerify + "\n",
+				gap:    "not a gap: the signature is made with another key",
+			},
+			trCase{
+				name:   "mldsa65-verify-unsigned-server",
+				stream: trRawServer(trRealityServer),
+				client: trRealityClient + "  mldsa65-verify: %VERIFY%\n",
+				gap:    "not a gap: the server has no mldsa65Seed",
+			},
+		)
+	} else {
+		t.Log("built with Go older than 1.27: mldsa65-verify is not checked")
 	}
 	// the vision case needs the flow on the server user
 	for i := range cases {
