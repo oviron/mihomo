@@ -270,6 +270,9 @@ func ClientHandshake(rw io.ReadWriter, addr Addr, command Command, user *User) (
 	if _, err := io.ReadFull(rw, buf[:3]); err != nil {
 		return nil, err
 	}
+	if rep := buf[1]; rep != 0 { // the server rejected the request
+		return nil, Error(rep)
+	}
 
 	return ReadAddr(rw, buf)
 }

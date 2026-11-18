@@ -4,6 +4,7 @@ import (
 	"net"
 
 	"github.com/metacubex/mihomo/common/utils"
+	"github.com/metacubex/mihomo/transport/vless/vision"
 
 	"github.com/gofrs/uuid/v5"
 )
@@ -22,7 +23,12 @@ const (
 	CommandTCP byte = 1
 	CommandUDP byte = 2
 	CommandMux byte = 3
+	CommandRvs byte = 4 // reverse proxy: the server opens Mux.Cool sessions to the client
 )
+
+// ReverseDestination is the destination that stands for the reverse command,
+// as in Xray-core.
+const ReverseDestination = "v1.rvs.cool"
 
 // Addr types
 const (
@@ -38,12 +44,15 @@ type DstAddr struct {
 	Addr     []byte
 	Port     uint16
 	Mux      bool // currently used for XUDP only
+	Reverse  bool // CommandRvs, no address
 }
 
 // Client is vless connection generator
 type Client struct {
 	uuid   uuid.UUID
 	Addons *Addons
+
+	Testseed *vision.Testseed // nil keeps the built-in vision padding
 }
 
 // StreamConn return a Conn with net.Conn and DstAddr

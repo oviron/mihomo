@@ -81,7 +81,7 @@ func (vc *Conn) sendRequest(p []byte) (err error) {
 	requestLen += 1  // addons length
 	requestLen += len(addonsBytes)
 	requestLen += 1 // command
-	if !vc.dst.Mux {
+	if !vc.dst.Mux && !vc.dst.Reverse {
 		requestLen += 2 // port
 		requestLen += 1 // addr type
 		requestLen += len(vc.dst.Addr)
@@ -100,6 +100,8 @@ func (vc *Conn) sendRequest(p []byte) (err error) {
 
 	if vc.dst.Mux {
 		buf.Must(buffer.WriteByte(CommandMux))
+	} else if vc.dst.Reverse {
+		buf.Must(buffer.WriteByte(CommandRvs))
 	} else {
 		if vc.dst.UDP {
 			buf.Must(buffer.WriteByte(CommandUDP))
@@ -171,6 +173,7 @@ func newConn(conn net.Conn, client *Client, dst *DstAddr) (net.Conn, error) {
 			if err != nil {
 				return nil, err
 			}
+			visionConn.SetTestseed(client.Testseed)
 			return visionConn, nil
 		}
 	}
