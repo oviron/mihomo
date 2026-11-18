@@ -122,6 +122,18 @@ Known behaviour of Xray-core v26.11.9 worth knowing when you configure a server:
   36-character UUID is such a password. mihomo warns about it in the log.
 - `xdns` with resolvers of type `tcp`: Xray-core's own client sends the DNS
   messages without the length prefix. mihomo sends it.
+- `xdns` and the mKCP `mtu` of the server: the server drops a datagram of
+  its own that does not fit into a DNS answer (`err size` in its log) and
+  mKCP has to send the data again, which costs speed. Nothing is
+  negotiated, so `kcpSettings.mtu` of the server has to leave room: the size
+  of the answer to the longest query, less 2 bytes, less what the masks below
+  mKCP add, 6 bytes for `mkcp-legacy` and 28 when it has a seed (`value`).
+  The answer is as large as the smaller of the server's `edns0` and the size
+  the query announces, which is the `edns0` of the client or that of a
+  resolver in between, which makes its own queries. With TXT records that
+  makes 926 when both are 1232 (904 with a seed) and 220 when the query has
+  no EDNS (198 with a seed). The client needs no such limit on its `mtu`:
+  the mask splits a datagram over as many queries as it takes.
 
 - `header-custom` over UDP in `prefix` mode: when the server echoes a value
   the client makes anew for every datagram, most of what the server sends is

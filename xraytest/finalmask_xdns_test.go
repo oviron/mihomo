@@ -37,8 +37,14 @@ import (
 // must not send a datagram larger than the smallest answer, which is the
 // answer to a query with the longest name: fmXDNSTunnel.answerCap follows
 // NewResp of resp.go. Every datagram costs 2 bytes of length in the answer,
-// and mkcp-legacy below mKCP adds 6 bytes that kcpSettings.mtu does not
-// count, hence mtu = answerCap - 8. For the domain t.example.com:
+// and the masks below mKCP add bytes that kcpSettings.mtu does not count:
+// mkcp-legacy 6 without a seed and 28 with one, the nonce and the tag of
+// AES-GCM. Hence mtu = answerCap - 2 - 6, or answerCap - 2 - 28 with a seed.
+// This is the setting of the server alone: mKCP does not negotiate the MTU,
+// and Xray's own client gets the same drops from a server with a larger one.
+// The answer is sized by the smaller of the server's edns0 and the one the
+// query announces; the checks give both sides the same.
+// For the domain t.example.com and mkcp-legacy without a seed:
 //
 //	TXT    no EDNS   512-12-(255+4)-12 = 229 -> 228   mtu 220
 //	TXT    1232      1232-12-259-11-12 = 938 -> 934   mtu 926
@@ -61,6 +67,8 @@ type fmXDNSTunnel struct {
 	lenLimit   int // 255 when 0
 	labelLimit int // 63 when 0
 	extraPoll  int
+	// seed is the seed of mkcp-legacy on both sides, none when empty.
+	seed string
 	// mtuExtra is added to the mKCP MTU of the server.
 	mtuExtra int
 	// clientMTU is the mKCP MTU of the client, that of the server when 0.
@@ -146,7 +154,24 @@ func (tn fmXDNSTunnel) mtu() int {
 			}
 		}
 	}
-	return smallest - 2 - 6
+	return smallest - 2 - tn.legacyOverhead()
+}
+
+// legacy is the mkcp-legacy mask of both sides.
+func (tn fmXDNSTunnel) legacy() obj {
+	if tn.seed == "" {
+		return fmMask("mkcp-legacy", nil)
+	}
+	return fmMask("mkcp-legacy", obj{"value": tn.seed})
+}
+
+// legacyOverhead is what mkcp-legacy adds to a datagram of mKCP: a checksum
+// and a length, or with a seed the nonce and the tag of AES-GCM.
+func (tn fmXDNSTunnel) legacyOverhead() int {
+	if tn.seed == "" {
+		return 4 + 2
+	}
+	return 12 + 16
 }
 
 func (tn fmXDNSTunnel) domains(xrayNames bool) []obj {
@@ -173,7 +198,7 @@ func (tn fmXDNSTunnel) start(t *testing.T) (*xray, int) {
 	mtu := tn.mtu() + tn.mtuExtra
 	require.GreaterOrEqual(t, mtu, 21, "nothing fits into the answers")
 	port := freePort(t)
-	inbound := fmKCPInbound(port, fmMask("mkcp-legacy", nil), fmMask("xdns", obj{"domains": tn.domains(true)}))
+	inbound := fmKCPInbound(port, tn.legacy(), fmMask("xdns", obj{"domains": tn.domains(true)}))
 	inbound["streamSettings"].(obj)["kcpSettings"] = obj{"mtu": mtu}
 	return startXray(t, inbound), port
 }
@@ -194,7 +219,7 @@ func (tn fmXDNSTunnel) proxy(t *testing.T, resolvers []obj) C.Proxy {
 		mtu = tn.mtu()
 	}
 	// port 9: the mask never sends to the server address
-	return fmKCP(t, 9, obj{"raw": true, "mtu": mtu}, fmMask("mkcp-legacy", nil), fmMask("xdns", mask))
+	return fmKCP(t, 9, obj{"raw": true, "mtu": mtu}, tn.legacy(), fmMask("xdns", mask))
 }
 
 func fmXDNSResolver(addrs ...string) []obj {
@@ -499,6 +524,9 @@ func TestFinalmaskXDNSSizing(t *testing.T) {
 		tn := fmXDNSTunnel{names: []string{fmXDNSDomain}, types: []int{c.qtype}, edns0: c.edns0}
 		require.Equal(t, c.answer, tn.answerCap(fmXDNSDomain, c.qtype), fmt.Sprint(c))
 		require.Equal(t, c.mtu, tn.mtu(), fmt.Sprint(c))
+		// the seed of mkcp-legacy costs 22 bytes more
+		tn.seed = "seed"
+		require.Equal(t, c.mtu-22, tn.mtu(), fmt.Sprint(c))
 	}
 }
 
@@ -727,21 +755,33 @@ func TestFinalmaskXDNS(t *testing.T) {
 		require.Empty(t, doh.requests())
 	})
 
+	// mkcp-legacy with a seed makes the datagrams of the server 22 bytes
+	// larger, which its mKCP MTU has to leave room for.
+	t.Run("mkcp-legacy-seed", func(t *testing.T) {
+		(fmXDNSTunnel{names: one, edns0: 1232, seed: "seed"}).run(t, tg)
+	})
+
 	// The sizing above is exact: one byte more and the server has datagrams
 	// that do not fit into the answers to the longest queries.
-	t.Run("mtu-too-large", func(t *testing.T) {
-		tn := fmXDNSTunnel{names: one, mtuExtra: 1}
-		x, port := tn.start(t)
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		conn, err := tn.proxy(t, fmXDNSResolver(loopback(port).String())).DialContext(ctx, tcpMetadata(tg.tcp))
-		require.NoError(t, err)
-		defer conn.Close()
-		go func() { _, _ = io.Copy(io.Discard, conn) }()
-		_, err = conn.Write(make([]byte, 256<<10))
-		require.NoError(t, err)
-		x.waitCount(t, "err size", 1)
-	})
+	for name, tn := range map[string]fmXDNSTunnel{
+		"mtu-too-large":      {mtuExtra: 1},
+		"mtu-too-large-seed": {mtuExtra: 1, edns0: 1232, seed: "seed"},
+	} {
+		tn := tn
+		tn.names = one
+		t.Run(name, func(t *testing.T) {
+			x, port := tn.start(t)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			conn, err := tn.proxy(t, fmXDNSResolver(loopback(port).String())).DialContext(ctx, tcpMetadata(tg.tcp))
+			require.NoError(t, err)
+			defer conn.Close()
+			go func() { _, _ = io.Copy(io.Discard, conn) }()
+			_, err = conn.Write(make([]byte, 256<<10))
+			require.NoError(t, err)
+			x.waitCount(t, "err size", 1)
+		})
+	}
 
 	// The server answers only for its own domain.
 	t.Run("wrong-domain", func(t *testing.T) {
