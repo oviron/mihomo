@@ -199,6 +199,13 @@ func TestTransportMKCP(t *testing.T) {
 			client: trTLSClient + "network: kcp\n",
 		},
 		{
+			name:   "vless-tti-out-of-range",
+			stream: `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]}`,
+			client: "network: kcp\nmkcp-opts: {tti: 1001}\n",
+			gap:    "not a gap: Xray-core refuses such a tti too",
+			gapErr: "tti must be between",
+		},
+		{
 			name:     "trojan-tls",
 			protocol: "trojan",
 			stream:   `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]},` + trTLSServer,

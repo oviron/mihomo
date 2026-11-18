@@ -269,3 +269,25 @@ func TestPipelinedWriterLifetime(t *testing.T) {
 		t.Fatal("the loop did not end")
 	}
 }
+
+// The same when the loop is the one to notice the end, between two POSTs.
+func TestPipelinedWriterCancelWhilePacing(t *testing.T) {
+	for i := 0; i < 50; i++ {
+		server := &pipelineTestServer{protoMajor: 2}
+		writer := newTestPipelinedWriter(server, 10)
+		writer.interval = Range{50, 50}
+		done := make(chan error, 1)
+		go func() {
+			_, err := writer.Write(pipelineTestData(1000))
+			done <- err
+		}()
+		time.Sleep(time.Duration(i%10) * time.Millisecond)
+		writer.cancel()
+		select {
+		case err := <-done:
+			require.Error(t, err)
+		case <-time.After(3 * time.Second):
+			t.Fatal("Write did not return after the context was cancelled")
+		}
+	}
+}

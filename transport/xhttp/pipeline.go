@@ -21,7 +21,8 @@ import (
 // has no response yet. The server puts packets that overtake each other back
 // in order in a queue of scMaxBufferedPosts, 30 by default, and answers a POST
 // as soon as the packet is queued; a window well below that keeps the queue
-// from overflowing while one POST is held up on its way.
+// from overflowing while one POST is held up on its way. A server set to a
+// queue shorter than the window is not for pipeline-posts.
 const pipelineWindow = 16
 
 // pipelinedWriter is the packet-up uploader of Xray-core (splithttp/dialer.go):
@@ -157,9 +158,15 @@ func (p *pipelinedWriter) next() []byte {
 
 func (p *pipelinedWriter) loop() {
 	defer close(p.loopDone)
-	// the stream may end without Close, with the client it belongs to
+	// the stream may end without Close, with the client it belongs to: wake
+	// whoever waits, here and when the loop itself is the one to notice
 	stop := contextutils.AfterFunc(p.ctx, func() { p.fail(p.ctx.Err()) })
-	defer stop()
+	defer func() {
+		stop()
+		if err := p.ctx.Err(); err != nil {
+			p.fail(err)
+		}
+	}()
 	var seq uint64
 	var lastPost time.Time
 	for {

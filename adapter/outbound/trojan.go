@@ -310,6 +310,7 @@ func (t *Trojan) Close() error {
 func NewTrojan(option TrojanOption) (*Trojan, error) {
 	addr := net.JoinHostPort(option.Server, strconv.Itoa(option.Port))
 
+	sni := option.SNI // as configured: the transports with legs of their own fill it in per leg
 	if option.SNI == "" {
 		option.SNI = option.Server
 	}
@@ -427,10 +428,6 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 		)
 	}
 	if option.Network == "xhttp" {
-		sni := option.SNI
-		if sni == option.Server { // defaulted above; each leg falls back to its own server
-			sni = ""
-		}
 		t.xhttpClient, err = newXHTTPClient(xhttpTransport{
 			Base: t.Base, Dialer: t.dialer, Server: option.Server, Port: option.Port,
 			TLS: true, ALPN: option.ALPN, Options: &t.option.XHTTPOpts,
@@ -455,10 +452,6 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 	}
 
 	if option.Network == "hysteria" {
-		sni := option.SNI
-		if sni == option.Server { // defaulted above
-			sni = ""
-		}
 		t.hysteriaClient, err = newHysteriaTransport(hysteriaTransport{
 			Base: t.Base, Dialer: t.dialer, Server: option.Server, Port: option.Port,
 			TLS: true, ALPN: option.ALPN, Options: &t.option.HysteriaOpts,

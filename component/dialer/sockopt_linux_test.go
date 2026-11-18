@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux && go1.23
 
 package dialer
 
@@ -84,12 +84,10 @@ func TestSockopt(t *testing.T) {
 	})
 }
 
-func TestSockoptUnknownCongestion(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer l.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err = DialContext(ctx, "tcp", l.Addr().String(), WithSockopt(Sockopt{TCPCongestion: "no-such-algorithm"}))
-	require.ErrorContains(t, err, "TCP_CONGESTION")
+// An option the kernel refuses does not fail the dial.
+func TestSockoptRefusedOption(t *testing.T) {
+	withFd := dialWithSockopt(t, Sockopt{TCPCongestion: "no-such-algorithm", TCPUserTimeout: 4321})
+	withFd(func(fd int) {
+		assert.Equal(t, 4321, getInt(t, fd, unix.IPPROTO_TCP, unix.TCP_USER_TIMEOUT))
+	})
 }
