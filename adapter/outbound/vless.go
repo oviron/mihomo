@@ -24,6 +24,7 @@ import (
 	"github.com/metacubex/mihomo/transport/tuic/common"
 	"github.com/metacubex/mihomo/transport/vless"
 	"github.com/metacubex/mihomo/transport/vless/encryption"
+	"github.com/metacubex/mihomo/transport/vless/vision"
 	"github.com/metacubex/mihomo/transport/vmess"
 	"github.com/metacubex/mihomo/transport/xhttp"
 
@@ -62,6 +63,7 @@ type VlessOption struct {
 	Port              int               `proxy:"port"`
 	UUID              string            `proxy:"uuid"`
 	Flow              string            `proxy:"flow,omitempty"`
+	Testseed          []uint32          `proxy:"testseed,omitempty"`
 	TLS               bool              `proxy:"tls,omitempty"`
 	ALPN              []string          `proxy:"alpn,omitempty"`
 	UDP               bool              `proxy:"udp,omitempty"`
@@ -487,6 +489,11 @@ func NewVless(option VlessOption) (*Vless, error) {
 	client, err := vless.NewClient(option.UUID, addons)
 	if err != nil {
 		return nil, err
+	}
+	if len(option.Testseed) > 0 {
+		if client.Testseed, err = vision.NewTestseed(option.Testseed); err != nil {
+			return nil, err
+		}
 	}
 
 	v := &Vless{

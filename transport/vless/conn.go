@@ -171,6 +171,7 @@ func newConn(conn net.Conn, client *Client, dst *DstAddr) (net.Conn, error) {
 			if err != nil {
 				return nil, err
 			}
+			visionConn.SetTestseed(client.Testseed)
 			return visionConn, nil
 		}
 	}

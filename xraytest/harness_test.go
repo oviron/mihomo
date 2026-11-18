@@ -78,6 +78,18 @@ func (x *xray) count(substr string) int {
 	return strings.Count(x.log.String(), substr)
 }
 
+// waitFor waits until cond holds for the debug log, which Xray writes with a delay.
+func (x *xray) waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("xray log: %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // waitCount waits until the debug log contains substr at least n times.
 func (x *xray) waitCount(t *testing.T, substr string, n int) {
 	t.Helper()
