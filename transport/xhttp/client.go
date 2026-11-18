@@ -112,6 +112,7 @@ func (c *PacketUpWriter) write(b []byte) (int, error) {
 		Host:   c.cfg.Host,
 		Path:   c.cfg.NormalizedPath(),
 	}
+	u.RawQuery = c.cfg.NormalizedQuery()
 
 	req, err := http.NewRequestWithContext(c.ctx, c.cfg.GetNormalizedUplinkHTTPMethod(), u.String(), nil)
 	if err != nil {
@@ -243,6 +244,7 @@ type Client struct {
 }
 
 func NewClient(cfg *Config, makeTransport TransportMaker, makeDownloadTransport TransportMaker, hasReality bool) (*Client, error) {
+	cfg.applyXrayDefaults()
 	mode := cfg.EffectiveMode(hasReality)
 	switch mode {
 	case "stream-one", "stream-up", "packet-up":
@@ -350,6 +352,7 @@ func (c *Client) DialStreamOne(ctx context.Context) (net.Conn, error) {
 		Host:   c.cfg.Host,
 		Path:   c.cfg.NormalizedPath(),
 	}
+	requestURL.RawQuery = c.cfg.NormalizedQuery()
 	pr, pw := io.Pipe()
 
 	conn := &Conn{writer: pw}
@@ -447,12 +450,14 @@ func (c *Client) DialStreamUp(ctx context.Context) (net.Conn, error) {
 		Host:   c.cfg.Host,
 		Path:   c.cfg.NormalizedPath(),
 	}
+	streamURL.RawQuery = c.cfg.NormalizedQuery()
 
 	downloadURL := url.URL{
 		Scheme: "https",
 		Host:   downloadCfg.Host,
 		Path:   downloadCfg.NormalizedPath(),
 	}
+	downloadURL.RawQuery = downloadCfg.NormalizedQuery()
 	pr, pw := io.Pipe()
 
 	conn := &Conn{writer: pw}
@@ -591,6 +596,7 @@ func (c *Client) DialPacketUp(ctx context.Context) (net.Conn, error) {
 		Host:   downloadCfg.Host,
 		Path:   downloadCfg.NormalizedPath(),
 	}
+	downloadURL.RawQuery = downloadCfg.NormalizedQuery()
 
 	writerCtx, writerCancel := context.WithCancel(c.ctx)
 	writer := &PacketUpWriter{

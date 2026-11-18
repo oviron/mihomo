@@ -331,17 +331,14 @@ func trRun(t *testing.T, cases []trCase) {
 				client = "type: vless\nuuid: %UUID%\n" + client
 			}
 			proxy, err := trParseProxy(trFill(t, client, port, target), port)
+			require.NoError(t, err, "parse proxy")
+			t.Cleanup(func() { _ = proxy.Close() })
 			if c.gap != "" {
-				if err == nil {
-					defer proxy.Close()
-					err = trRoundTrip(proxy, tg, 16, 5*time.Second)
-				}
+				err = trRoundTrip(proxy, tg, 16, 5*time.Second)
 				require.Error(t, err, "works now, drop the gap mark: %s", c.gap)
 				t.Logf("known gap (%s): %v", c.gap, err)
 				return
 			}
-			require.NoError(t, err, "parse proxy")
-			t.Cleanup(func() { _ = proxy.Close() })
 			if c.check != nil {
 				c.check(t, x, proxy, tg)
 			} else {

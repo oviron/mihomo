@@ -33,6 +33,10 @@ type RealityConfig struct {
 	ShortID   [RealityMaxShortIDLen]byte
 
 	SupportX25519MLKEM768 bool
+
+	// ClientVersion is what the server compares with its minClientVer and
+	// maxClientVer, 1.8.2 when nil.
+	ClientVersion *[3]byte
 }
 
 func GetRealityConn(ctx context.Context, conn net.Conn, fingerprint UClientHelloID, serverName string, realityConfig *RealityConfig) (net.Conn, error) {
@@ -74,6 +78,9 @@ func GetRealityConn(ctx context.Context, conn net.Conn, fingerprint UClientHello
 		hello.SessionId[0] = 1
 		hello.SessionId[1] = 8
 		hello.SessionId[2] = 2
+		if realityConfig.ClientVersion != nil {
+			copy(hello.SessionId, realityConfig.ClientVersion[:])
+		}
 
 		//log.Debugln("REALITY hello.sessionId[:16]: %v", hello.SessionId[:16])
 

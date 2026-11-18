@@ -39,6 +39,11 @@ func TestTransportGRPC(t *testing.T) {
 			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: my%20gun}\n",
 		},
 		{
+			name:   "authority",
+			stream: grpc(`"serviceName":"gun"`, trTLSServer),
+			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun, authority: front.example.org}\n",
+		},
+		{
 			name:   "keepalive-and-user-agent",
 			stream: grpc(`"serviceName":"gun","idle_timeout":10,"health_check_timeout":5`, trTLSServer),
 			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun, grpc-user-agent: chrome, ping-interval: 10}\n",
@@ -95,7 +100,6 @@ func TestTransportHTTPUpgrade(t *testing.T) {
 		},
 		{
 			name:   "tls-early-data-ed-in-path",
-			gap:    "ed in the path turns on the WebSocket early data header, HTTPUpgrade servers want the payload after the request",
 			stream: `"network":"httpupgrade","httpupgradeSettings":{"path":"/up?ed=2560"},` + trTLSServer,
 			client: trTLSClient + "network: ws\nws-opts: {path: \"/up?ed=2560\", v2ray-http-upgrade: true}\n",
 		},
