@@ -82,7 +82,7 @@ type Config struct {
 type Client struct {
 	cfg Config
 
-	mu     sync.Mutex
+	lock   chan struct{} // guards the fields below; a channel so that waiting for it ends with a context
 	conn   *quic.Conn
 	pc     net.PacketConn
 	closed bool
@@ -92,7 +92,7 @@ func NewClient(cfg Config) (*Client, error) {
 	if cfg.Dial == nil {
 		return nil, errors.New("hysteria transport: no dialer")
 	}
-	return &Client{cfg: cfg}, nil
+	return &Client{cfg: cfg, lock: make(chan struct{}, 1)}, nil
 }
 
 func quicConfig() *quic.Config {
@@ -111,8 +111,12 @@ func quicConfig() *quic.Config {
 // connect returns the authenticated connection, opening a new one when there
 // is none or the last one has ended.
 func (c *Client) connect(ctx context.Context) (*quic.Conn, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	select {
+	case c.lock <- struct{}{}:
+		defer func() { <-c.lock }()
+	case <-ctx.Done(): // another stream is still dialing or authenticating
+		return nil, ctx.Err()
+	}
 	if c.closed {
 		return nil, net.ErrClosed
 	}
@@ -180,8 +184,10 @@ func (c *Client) Dial(ctx context.Context) (net.Conn, error) {
 		}
 		stream, err := conn.OpenStream()
 		if err != nil {
-			c.drop(conn)
-			if attempt == 0 { // the connection ended since the last stream
+			// only a connection that has ended is replaced: when the server
+			// has no stream to give, the streams that run keep running
+			if conn.Context().Err() != nil && attempt == 0 {
+				c.drop(conn)
 				continue
 			}
 			return nil, err
@@ -192,8 +198,8 @@ func (c *Client) Dial(ctx context.Context) (net.Conn, error) {
 
 // drop forgets conn so that the next stream opens a new connection.
 func (c *Client) drop(conn *quic.Conn) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.lock <- struct{}{}
+	defer func() { <-c.lock }()
 	if c.conn == conn {
 		c.closeConnLocked(closeErrCodeOK)
 	}
@@ -208,8 +214,8 @@ func (c *Client) closeConnLocked(code quic.ApplicationErrorCode) {
 }
 
 func (c *Client) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.lock <- struct{}{}
+	defer func() { <-c.lock }()
 	c.closed = true
 	c.closeConnLocked(closeErrCodeOK)
 	return nil
@@ -237,17 +243,24 @@ func (c *streamConn) Write(b []byte) (int, error) {
 		return c.stream.Write(b)
 	}
 	// in one write, so that the frame type and the first bytes of the proxy
-	// protocol leave together
+	// protocol leave together; and once only, whatever becomes of the write
+	c.started = true
 	first := quicvarint.Append(make([]byte, 0, quicvarint.Len(frameTypeTCPRequest)+len(b)), frameTypeTCPRequest)
 	if _, err := c.stream.Write(append(first, b...)); err != nil {
 		return 0, err
 	}
-	c.started = true
 	return len(b), nil
 }
 
+// Close ends the stream. A write that is still under way, waiting for the
+// peer to take data, is cancelled rather than waited for.
 func (c *streamConn) Close() error {
 	c.stream.CancelRead(0)
+	if !c.writeMu.TryLock() {
+		c.stream.CancelWrite(0)
+		return nil
+	}
+	defer c.writeMu.Unlock()
 	return c.stream.Close()
 }
 

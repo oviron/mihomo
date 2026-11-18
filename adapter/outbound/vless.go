@@ -941,7 +941,7 @@ func NewVless(option VlessOption) (*Vless, error) {
 		}
 	case "hysteria":
 		v.hysteriaClient, err = newHysteriaTransport(hysteriaTransport{
-			Base: v.Base, Dialer: v.dialer, Server: option.Server, Port: option.Port,
+			Base: v.Base, Basic: &v.option.BasicOption, Dialer: v.dialer, Server: option.Server, Port: option.Port,
 			TLS: option.TLS, ALPN: option.ALPN, Options: &v.option.HysteriaOpts,
 			TLSConfig: vmess.TLSConfig{
 				Host:           option.ServerName,

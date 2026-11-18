@@ -11,6 +11,7 @@ import (
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/log"
 
+	"github.com/metacubex/randv2"
 	D "github.com/miekg/dns"
 )
 
@@ -92,9 +93,8 @@ func dnsAnswers(ctx context.Context, name string, qtype uint16, r resolver.Resol
 	return msg.Answer, true, nil
 }
 
-// lookupSRVAddress returns the target and the port of the SRV record of a name
-// like _service._proto.example.org: the lowest priority, then the highest
-// weight.
+// lookupSRVAddress returns the target and the port of a SRV record of a name
+// like _service._proto.example.org.
 func lookupSRVAddress(ctx context.Context, name string, r resolver.Resolver) (string, string, error) {
 	parts := strings.SplitN(name, ".", 3)
 	if len(parts) != 3 || !strings.HasPrefix(parts[0], "_") || !strings.HasPrefix(parts[1], "_") {
@@ -114,18 +114,45 @@ func lookupSRVAddress(ctx context.Context, name string, r resolver.Resolver) (st
 		}
 		return strings.TrimSuffix(records[0].Target, "."), strconv.Itoa(int(records[0].Port)), nil
 	}
-	var best *D.SRV
+	var records []*D.SRV
 	for _, rr := range answers {
 		if srv, ok := rr.(*D.SRV); ok {
-			if best == nil || srv.Priority < best.Priority || (srv.Priority == best.Priority && srv.Weight > best.Weight) {
-				best = srv
-			}
+			records = append(records, srv)
 		}
 	}
+	best := pickSRV(records)
 	if best == nil {
 		return "", "", errors.New("no SRV record")
 	}
 	return strings.TrimSuffix(best.Target, "."), strconv.Itoa(int(best.Port)), nil
+}
+
+// pickSRV takes a record of the lowest priority, at random in proportion to
+// the weights, as RFC 2782 has it and net.LookupSRV orders its result.
+func pickSRV(records []*D.SRV) *D.SRV {
+	var lowest []*D.SRV
+	total := 0
+	for _, srv := range records {
+		switch {
+		case len(lowest) == 0 || srv.Priority < lowest[0].Priority:
+			lowest, total = []*D.SRV{srv}, int(srv.Weight)
+		case srv.Priority == lowest[0].Priority:
+			lowest, total = append(lowest, srv), total+int(srv.Weight)
+		}
+	}
+	if len(lowest) == 0 {
+		return nil
+	}
+	if total == 0 {
+		return lowest[randv2.IntN(len(lowest))]
+	}
+	n := randv2.IntN(total)
+	for _, srv := range lowest {
+		if n -= int(srv.Weight); n < 0 {
+			return srv
+		}
+	}
+	return lowest[len(lowest)-1]
 }
 
 // lookupTXTAddress returns the first "host:port" among the TXT records of name.

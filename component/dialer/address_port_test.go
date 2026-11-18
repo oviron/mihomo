@@ -63,8 +63,7 @@ func (r *fakeResolver) ResetConnection() {}
 func TestAddressPortStrategy(t *testing.T) {
 	r := &fakeResolver{records: []string{
 		`_xray._tcp.example.org. 60 IN SRV 20 5 2000 backup.example.org.`,
-		`_xray._tcp.example.org. 60 IN SRV 10 1 1000 low.example.org.`,
-		`_xray._tcp.example.org. 60 IN SRV 10 9 1001 entry.example.org.`,
+		`_xray._tcp.example.org. 60 IN SRV 10 0 1001 entry.example.org.`,
 		`txt.example.org. 60 IN TXT "v=spf1 -all"`,
 		`txt.example.org. 60 IN TXT "198.51.100.7:8443"`,
 		`junk.example.org. 60 IN TXT "no address here"`,
@@ -122,4 +121,21 @@ func TestDialWithAddressPortStrategy(t *testing.T) {
 	require.NoError(t, err)
 	defer conn.Close()
 	assert.Equal(t, l.Addr().String(), conn.RemoteAddr().String())
+}
+
+// Among the records of the lowest priority the pick follows the weights.
+func TestPickSRV(t *testing.T) {
+	records := []*D.SRV{
+		{Priority: 20, Weight: 100, Target: "backup."},
+		{Priority: 10, Weight: 1, Target: "light."},
+		{Priority: 10, Weight: 9, Target: "heavy."},
+	}
+	picks := map[string]int{}
+	for i := 0; i < 2000; i++ {
+		picks[pickSRV(records).Target]++
+	}
+	assert.Zero(t, picks["backup."])
+	assert.Greater(t, picks["light."], 50)
+	assert.Greater(t, picks["heavy."], 5*picks["light."])
+	assert.Nil(t, pickSRV(nil))
 }

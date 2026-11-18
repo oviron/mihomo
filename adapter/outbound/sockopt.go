@@ -26,6 +26,12 @@ type Sockopt struct {
 	AddressPortStrategy string `proxy:"address-port-strategy,omitempty"`
 }
 
+// quicDialOptions are the dial options of the proxy for a QUIC connection its
+// transport opens by itself, with the address-port-strategy of the proxy.
+func (b *BasicOption) quicDialOptions(base *Base) []dialer.Option {
+	return b.Sockopt.appendTo(base.DialOptions())
+}
+
 // appendTo adds the socket options to the options of a dialer.
 func (s Sockopt) appendTo(opts []dialer.Option) []dialer.Option {
 	if s == (Sockopt{}) {

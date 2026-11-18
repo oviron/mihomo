@@ -13,13 +13,10 @@ import (
 // carry their protocol over mKCP the way Xray-core lets any protocol do;
 // VMess has the same lines in vmess.go.
 func dialMKCP(ctx context.Context, dialer C.Dialer, addr string, opts MKCPOptions) (net.Conn, error) {
-	// the bounds Xray-core puts on its config; outside them the window sizes
-	// of mKCP are not defined
+	// the bound Xray-core puts on its config; outside it the window sizes of
+	// mKCP are not defined
 	if opts.TTI != 0 && (opts.TTI < 10 || opts.TTI > 1000) {
 		return nil, errors.New("mkcp-opts: tti must be between 10 and 1000")
-	}
-	if opts.MTU != 0 && opts.MTU < 576 {
-		return nil, errors.New("mkcp-opts: mtu must be at least 576")
 	}
 	raw, err := dialer.DialContext(ctx, "udp", addr)
 	if err != nil {

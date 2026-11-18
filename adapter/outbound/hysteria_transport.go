@@ -26,6 +26,7 @@ type HyStreamOptions struct {
 // hysteriaTransport describes the proxy a hysteria transport client is built for.
 type hysteriaTransport struct {
 	Base   *Base
+	Basic  *BasicOption
 	Dialer C.Dialer
 	Server string
 	Port   int
@@ -66,7 +67,7 @@ func newHysteriaTransport(t hysteriaTransport) (*hystream.Client, error) {
 			if err = tlsConfig.ECH.ClientHandle(ctx, stdConfig); err != nil {
 				return nil, nil, err
 			}
-			return common.DialQuic(ctx, addr, t.Base.DialOptions(), t.Dialer, stdConfig, cfg, common.DialQuicOption{})
+			return common.DialQuic(ctx, addr, t.Basic.quicDialOptions(t.Base), t.Dialer, stdConfig, cfg, common.DialQuicOption{})
 		},
 		OnConnected: func(conn *quic.Conn, serverReceiveBPS uint64) {
 			common.SetCongestionController(conn, "bbr", 0, "")

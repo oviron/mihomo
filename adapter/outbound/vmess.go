@@ -664,7 +664,7 @@ func NewVmess(option VmessOption) (*Vmess, error) {
 		)
 	case "xhttp":
 		v.xhttpClient, err = newXHTTPClient(xhttpTransport{
-			Base: v.Base, Dialer: v.dialer, Server: option.Server, Port: option.Port,
+			Base: v.Base, Basic: &v.option.BasicOption, Dialer: v.dialer, Server: option.Server, Port: option.Port,
 			TLS: option.TLS, ALPN: option.ALPN, Options: &v.option.XHTTPOpts,
 			TLSConfig: mihomoVMess.TLSConfig{
 				Host:              option.ServerName,

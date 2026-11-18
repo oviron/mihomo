@@ -76,6 +76,7 @@ func (o *XHTTPDownloadXHTTPOptions) apply(cfg *xhttp.Config) {
 // protocol do; VLESS builds its client in vless.go.
 type xhttpTransport struct {
 	Base   *Base
+	Basic  *BasicOption
 	Dialer C.Dialer
 	Server string
 	Port   int
@@ -91,6 +92,7 @@ type xhttpTransport struct {
 // and how it is secured.
 type xhttpLeg struct {
 	base      *Base
+	basic     *BasicOption
 	dialer    C.Dialer
 	server    string
 	addr      string
@@ -153,7 +155,7 @@ func (l *xhttpLeg) transport() http.RoundTripper {
 			if err = tlsConfig.ECH.ClientHandle(ctx, stdConfig); err != nil {
 				return nil, err
 			}
-			_, quicConn, err := common.DialQuic(ctx, l.addr, l.base.DialOptions(), l.dialer, stdConfig, cfg, common.DialQuicOption{Early: true})
+			_, quicConn, err := common.DialQuic(ctx, l.addr, l.basic.quicDialOptions(l.base), l.dialer, stdConfig, cfg, common.DialQuicOption{Early: true})
 			return quicConn, err
 		},
 		l.alpn,
@@ -165,6 +167,7 @@ func newXHTTPClient(t xhttpTransport) (*xhttp.Client, error) {
 	opts := t.Options
 	upload := &xhttpLeg{
 		base:      t.Base,
+		basic:     t.Basic,
 		dialer:    t.Dialer,
 		server:    t.Server,
 		addr:      net.JoinHostPort(t.Server, strconv.Itoa(t.Port)),

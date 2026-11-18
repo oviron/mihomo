@@ -429,7 +429,7 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 	}
 	if option.Network == "xhttp" {
 		t.xhttpClient, err = newXHTTPClient(xhttpTransport{
-			Base: t.Base, Dialer: t.dialer, Server: option.Server, Port: option.Port,
+			Base: t.Base, Basic: &t.option.BasicOption, Dialer: t.dialer, Server: option.Server, Port: option.Port,
 			TLS: true, ALPN: option.ALPN, Options: &t.option.XHTTPOpts,
 			TLSConfig: vmess.TLSConfig{
 				Host:              sni,
@@ -453,7 +453,7 @@ func NewTrojan(option TrojanOption) (*Trojan, error) {
 
 	if option.Network == "hysteria" {
 		t.hysteriaClient, err = newHysteriaTransport(hysteriaTransport{
-			Base: t.Base, Dialer: t.dialer, Server: option.Server, Port: option.Port,
+			Base: t.Base, Basic: &t.option.BasicOption, Dialer: t.dialer, Server: option.Server, Port: option.Port,
 			TLS: true, ALPN: option.ALPN, Options: &t.option.HysteriaOpts,
 			TLSConfig: vmess.TLSConfig{
 				Host:           sni,
