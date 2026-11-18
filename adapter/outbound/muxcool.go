@@ -139,6 +139,9 @@ func NewMuxCool(option MuxCoolOption, proxy ProxyAdapter) (ProxyAdapter, error) 
 	if vless, ok := proxy.(*Vless); ok && vless.option.Flow != "" {
 		return m, nil
 	}
+	// An inbound on XHTTP takes UDP sessions only, XHTTP has a multiplexing
+	// of its own for the rest (Xray-core, app/proxyman/inbound/inbound.go).
+	tcp := !muxCoolOverXHTTP(proxy)
 
 	dial := func(ctx context.Context) (net.Conn, error) {
 		return proxy.DialContext(ctx, &C.Metadata{
@@ -147,7 +150,7 @@ func NewMuxCool(option MuxCoolOption, proxy ProxyAdapter) (ProxyAdapter, error) 
 			DstPort: muxcool.DestinationPort,
 		})
 	}
-	if option.Concurrency >= 0 {
+	if option.Concurrency >= 0 && tcp {
 		m.tcp = muxcool.NewClient(dial, option.Concurrency)
 	}
 	switch {
@@ -155,6 +158,37 @@ func NewMuxCool(option MuxCoolOption, proxy ProxyAdapter) (ProxyAdapter, error) 
 		m.udp = muxcool.NewClient(dial, option.XudpConcurrency)
 	case option.XudpConcurrency == 0 && m.tcp != nil:
 		m.udp, m.shared = m.tcp, true
+	case option.XudpConcurrency == 0 && option.Concurrency >= 0: // TCP has no connections to share
+		m.udp = muxcool.NewClient(dial, option.Concurrency)
 	}
 	return m, nil
+}
+
+// muxCoolOverXHTTP reports whether the proxy reaches its server over XHTTP:
+// with a transport of its own, or with the one of stream-settings, which
+// carries every TCP connection the proxy makes.
+func muxCoolOverXHTTP(proxy ProxyAdapter) bool {
+	var network string
+	var basic *BasicOption
+	switch p := proxy.(type) {
+	case *Vless:
+		network, basic = p.option.Network, &p.option.BasicOption
+	case *Vmess:
+		network, basic = p.option.Network, &p.option.BasicOption
+	case *Trojan:
+		network, basic = p.option.Network, &p.option.BasicOption
+	case *ShadowSocks:
+		basic = &p.option.BasicOption
+	case *Socks5:
+		basic = &p.option.BasicOption
+	case *Http:
+		basic = &p.option.BasicOption
+	}
+	switch network {
+	case "xhttp":
+		return true
+	case "kcp", "hysteria": // over UDP, past stream-settings
+		return false
+	}
+	return basic != nil && basic.StreamSettings != nil && basic.StreamSettings.Network == "xhttp"
 }
