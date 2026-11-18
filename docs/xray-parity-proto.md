@@ -36,3 +36,19 @@ Vision writer follows Xray-core:
   two can start direct copy in the middle of the record.
 
 Fewer than four values mean Xray's defaults.
+
+## XUDP
+
+### `MIHOMO_XUDP_BASEKEY`
+
+Environment variable with 32 random bytes in unpadded URL-safe base64, the
+format of Xray's `XRAY_XUDP_BASEKEY` (`head -c 32 /dev/urandom | basenc --base64url | tr -d =`).
+
+The XUDP GlobalID tells the server which UDP flow a new connection continues,
+so the server keeps the same outgoing socket. By default it is seeded per
+process and a restart loses the mapping. With the key set the ID is a keyed
+BLAKE3 hash of the client address, as in Xray, and survives a restart for as
+long as the server keeps the flow (one minute after it went idle).
+
+Use a different key on every installation: the server treats a second flow
+with the same GlobalID as a reconnect of the first one.
