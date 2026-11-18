@@ -114,6 +114,16 @@ func TestTransportRAW(t *testing.T) {
 			client: "",
 		},
 		{
+			name:   "sockopt",
+			stream: `"network":"raw",` + trTLSServer,
+			client: trTLSClient + "sockopt: {tcp-user-timeout: 10000, tcp-max-seg: 1200, tcp-window-clamp: 65535, tcp-congestion: reno, tcp-keep-alive-idle: 30, tcp-keep-alive-interval: 10}\n",
+		},
+		{
+			name:   "sockopt-xhttp",
+			stream: trXHTTPServer(trTLSServer, ""),
+			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh}\nsockopt: {tcp-user-timeout: 10000, tcp-max-seg: 1200}\n",
+		},
+		{
 			name:   "http-header",
 			stream: `"network":"raw","rawSettings":{"header":{"type":"http","request":{"path":["/a","/b"],"headers":{"Host":["a.example.org"]}}}}`,
 			client: "network: http\nhttp-opts: {method: GET, path: [/a], headers: {Host: [a.example.org]}}\n",

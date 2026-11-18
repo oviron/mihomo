@@ -193,6 +193,7 @@ func (b *Base) Close() error {
 type BasicOption struct {
 	TFO         bool        `proxy:"tfo,omitempty"`
 	MPTCP       bool        `proxy:"mptcp,omitempty"`
+	Sockopt     Sockopt     `proxy:"sockopt,omitempty"`
 	Interface   string      `proxy:"interface-name,omitempty"`
 	RoutingMark int         `proxy:"routing-mark,omitempty"`
 	IPVersion   C.DNSPrefer `proxy:"ip-version,omitempty"`
@@ -207,6 +208,7 @@ type BasicOption struct {
 }
 
 func (b *BasicOption) NewDialer(opts []dialer.Option) C.Dialer {
+	opts = b.Sockopt.appendTo(opts)
 	cDialer := b.DialerForAPI
 	if cDialer == nil {
 		if b.DialerProxy != "" {
