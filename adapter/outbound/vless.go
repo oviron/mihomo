@@ -17,6 +17,7 @@ import (
 	"github.com/metacubex/mihomo/component/ech"
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/gun"
 	"github.com/metacubex/mihomo/transport/jls"
 	"github.com/metacubex/mihomo/transport/restls"
@@ -829,7 +830,7 @@ func NewVless(option VlessOption) (*Vless, error) {
 			makeDownloadTransport = func() http.RoundTripper {
 				return xhttp.NewTransport(
 					func(ctx context.Context) (net.Conn, error) {
-						return v.dialer.DialContext(ctx, "tcp", downloadAddr)
+						return finalmask.Raw(v.dialer).DialContext(ctx, "tcp", downloadAddr) // the masks are for the upload server
 					},
 					func(ctx context.Context, conn net.Conn, isH2 bool) (net.Conn, error) {
 						if downloadTLS {
@@ -896,7 +897,7 @@ func NewVless(option VlessOption) (*Vless, error) {
 						if err != nil {
 							return nil, err
 						}
-						_, quicConn, err := common.DialQuic(ctx, downloadAddr, v.DialOptions(), v.dialer, tlsConfig, cfg, common.DialQuicOption{Early: true})
+						_, quicConn, err := common.DialQuic(ctx, downloadAddr, v.DialOptions(), finalmask.Raw(v.dialer), tlsConfig, cfg, common.DialQuicOption{Early: true})
 						if err != nil {
 							return nil, err
 						}

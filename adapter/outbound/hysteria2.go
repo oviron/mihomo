@@ -15,6 +15,7 @@ import (
 	"github.com/metacubex/mihomo/component/resolver"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/tuic/common"
 
 	"github.com/metacubex/http"
@@ -289,7 +290,7 @@ func NewHysteria2(option Hysteria2Option) (*Hysteria2, error) {
 			STUNServers: option.RealmOpts.STUNServers,
 			HTTPClient: &http.Client{
 				Transport: &http.Transport{
-					DialContext:     outbound.dialer.DialContext,
+					DialContext:     finalmask.Raw(outbound.dialer).DialContext, // not the hysteria server
 					TLSClientConfig: httpTLSClientConfig,
 					// from http.DefaultTransport
 					ForceAttemptHTTP2:     true,

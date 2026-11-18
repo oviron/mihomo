@@ -6,6 +6,7 @@ import (
 	"github.com/metacubex/mihomo/adapter/outbound"
 	"github.com/metacubex/mihomo/common/structure"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/transport/finalmask"
 )
 
 func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error) {
@@ -13,6 +14,10 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 	proxyType, existType := mapping["type"].(string)
 	if !existType {
 		return nil, fmt.Errorf("missing type")
+	}
+
+	if err := finalmask.ValidateProxy(mapping); err != nil {
+		return nil, err
 	}
 
 	opt := applyProxyOptions(options...)
