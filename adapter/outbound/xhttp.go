@@ -10,6 +10,7 @@ import (
 
 	"github.com/metacubex/mihomo/component/dialer"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/tuic/common"
 	"github.com/metacubex/mihomo/transport/vmess"
 	"github.com/metacubex/mihomo/transport/xhttp"
@@ -156,8 +157,13 @@ func (l *xhttpLeg) transport() http.RoundTripper {
 			if err = tlsConfig.ECH.ClientHandle(ctx, stdConfig); err != nil {
 				return nil, err
 			}
-			_, quicConn, err := common.DialQuic(ctx, l.addr, l.dialOptions, l.dialer, stdConfig, cfg, common.DialQuicOption{Early: true})
-			return quicConn, err
+			quicParams := finalmask.QuicParamsOf(l.dialer) // nil without finalmask.quic-params
+			_, quicConn, err := common.DialQuic(ctx, l.addr, l.dialOptions, l.dialer, stdConfig, quicParams.HTTP3Config(cfg), common.DialQuicOption{Early: true})
+			if err != nil {
+				return nil, err
+			}
+			quicParams.ApplyCongestion(quicConn, 0)
+			return quicConn, nil
 		},
 		l.alpn,
 		l.keepAlive,

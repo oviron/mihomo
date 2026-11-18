@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/hystream"
 	"github.com/metacubex/mihomo/transport/tuic/common"
 	"github.com/metacubex/mihomo/transport/vmess"
@@ -49,9 +50,15 @@ func newHysteriaTransport(t hysteriaTransport) (*hystream.Client, error) {
 		return nil, errors.New("hysteria transport takes plain TLS only")
 	}
 	addr := net.JoinHostPort(t.Server, strconv.Itoa(t.Port))
+	quicParams := finalmask.QuicParamsOf(t.Dialer) // nil without finalmask.quic-params
 	return hystream.NewClient(hystream.Config{
-		Auth: t.Options.Auth,
+		Auth:       t.Options.Auth,
+		ReceiveBPS: quicParams.HysteriaReceiveBPS(),
 		Dial: func(ctx context.Context, cfg *quic.Config) (net.PacketConn, *quic.Conn, error) {
+			if quicParams != nil {
+				cfg = cfg.Clone() // the config belongs to the transport
+				quicParams.ApplyTo(cfg)
+			}
 			tlsConfig := t.TLSConfig
 			if tlsConfig.Host == "" {
 				tlsConfig.Host = t.Server
@@ -69,8 +76,6 @@ func newHysteriaTransport(t hysteriaTransport) (*hystream.Client, error) {
 			}
 			return common.DialQuic(ctx, addr, t.Basic.quicDialOptions(t.Base), t.Dialer, stdConfig, cfg, common.DialQuicOption{})
 		},
-		OnConnected: func(conn *quic.Conn, serverReceiveBPS uint64) {
-			common.SetCongestionController(conn, "bbr", 0, "")
-		},
+		OnConnected: quicParams.ApplyHysteriaStream,
 	})
 }
