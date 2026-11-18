@@ -19,7 +19,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: "1.27"
           check-latest: true
       - name: Build
         env:
@@ -47,7 +47,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: "1.27"
       - uses: actions/download-artifact@v4
         with:
           path: dist
