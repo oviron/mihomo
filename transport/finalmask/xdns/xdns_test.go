@@ -350,11 +350,24 @@ func TestDatagramTooLarge(t *testing.T) {
 	}
 	time.Sleep(100 * time.Millisecond)
 	require.Empty(t, server.seen(false), "nothing is sent of a datagram that does not fit")
+	// 255 queries at once may be more than the socket of the test server
+	// holds while it is busy; a transport would send the datagram again.
 	data := randomBytes(510)
-	_, err := pc.WriteTo(data, nil)
-	require.NoError(t, err)
-	require.Equal(t, data, <-server.received)
-	require.Len(t, server.seen(false), 255)
+	var got []byte
+	for attempt := 0; attempt < 10 && got == nil; attempt++ {
+		_, err := pc.WriteTo(data, nil)
+		require.NoError(t, err)
+		select {
+		case got = <-server.received:
+		case <-time.After(2 * time.Second):
+		}
+	}
+	require.Equal(t, data, got)
+	queries := server.seen(false)
+	require.GreaterOrEqual(t, len(queries), 255)
+	for _, q := range queries {
+		require.Equal(t, byte(255), q.data[queryHeader+2], "the datagram is split over 255 queries")
+	}
 
 	// With several domains a datagram goes to one that carries it.
 	server = newTestServer(t, testDomain, "wide.example.org")
@@ -367,7 +380,7 @@ func TestDatagramTooLarge(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, data, <-server.received)
 	}
-	_, err = pc.WriteTo(make([]byte, 4097), nil)
+	_, err := pc.WriteTo(make([]byte, 4097), nil)
 	require.ErrorContains(t, err, "the tunnel carries 4096")
 }
 

@@ -240,6 +240,7 @@ func (s *testServer) listenUDP(t *testing.T) string {
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pc.Close() })
+	_ = pc.(*net.UDPConn).SetReadBuffer(4 << 20) // the client sends in bursts
 	go func() {
 		buf := make([]byte, 4096)
 		for {
