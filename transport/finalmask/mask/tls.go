@@ -117,10 +117,15 @@ func (o TLSOptions) Config(serverName string) (*tls.Config, error) {
 		for _, name := range checkNames {
 			name := name
 			verifiers = append(verifiers, func(state tls.ConnectionState) error {
-				if name == "" {
-					return verify(state.PeerCertificates, state.ServerName)
+				checked := name
+				if checked == "" {
+					// An IP address is not sent as the server name and so is
+					// not in the state, but the certificate is checked for it.
+					if checked = state.ServerName; checked == "" {
+						checked = serverName
+					}
 				}
-				return verify(state.PeerCertificates, name)
+				return verify(state.PeerCertificates, checked)
 			})
 		}
 	}

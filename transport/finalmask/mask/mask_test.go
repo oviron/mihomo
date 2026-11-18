@@ -1,11 +1,18 @@
 package mask
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"math/big"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/metacubex/mihomo/component/ca"
 
@@ -178,4 +185,53 @@ func TestTLSOptions(t *testing.T) {
 	// a field that is set to nothing is not a request for anything
 	_, err = decode(map[string]any{"allowInsecure": false, "fingerprint": "", "certificates": []any{}})
 	require.NoError(t, err)
+}
+
+// With a pinned CA the certificate still has to be for the server. An IP
+// address is not sent as the server name, so it is not in the connection
+// state: the name of the config is what the certificate is checked for.
+func TestTLSOptionsPinnedCA(t *testing.T) {
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	caTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test ca"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	require.NoError(t, err)
+	caCert, err := x509.ParseCertificate(caDER)
+	require.NoError(t, err)
+	sum := sha256.Sum256(caDER)
+	pin := hex.EncodeToString(sum[:])
+
+	leaf := func(dnsNames []string, ips []net.IP) *x509.Certificate {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		template := &x509.Certificate{
+			SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "leaf"},
+			NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
+			DNSNames: dnsNames, IPAddresses: ips,
+			ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		}
+		der, err := x509.CreateCertificate(rand.Reader, template, caCert, &key.PublicKey, caKey)
+		require.NoError(t, err)
+		cert, err := x509.ParseCertificate(der)
+		require.NoError(t, err)
+		return cert
+	}
+	check := func(serverName string, cert *x509.Certificate, sni string) error {
+		config, err := TLSOptions{PinnedPeerCertSha256: pin}.Config(serverName)
+		require.NoError(t, err)
+		return config.VerifyConnection(tls.ConnectionState{ServerName: sni, PeerCertificates: []*x509.Certificate{cert, caCert}})
+	}
+
+	forName := leaf([]string{"dns.example.org"}, nil)
+	require.NoError(t, check("dns.example.org", forName, "dns.example.org"))
+	require.Error(t, check("other.example.org", forName, "other.example.org"))
+
+	forIP := leaf(nil, []net.IP{net.ParseIP("192.0.2.1")})
+	require.NoError(t, check("192.0.2.1", forIP, ""))
+	require.Error(t, check("192.0.2.1", forName, ""), "a certificate of the pinned CA for another server")
+	require.Error(t, check("192.0.2.2", forIP, ""))
 }
