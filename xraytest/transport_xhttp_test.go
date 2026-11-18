@@ -118,13 +118,11 @@ xhttp-opts:
 		},
 		{
 			name:   "padding-obfs-defaults",
-			gap:    "x-padding-key, -header, -placement and -method have no Xray defaults",
 			stream: trXHTTPServer(trTLSServer, `,"xPaddingObfsMode":true`),
 			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, x-padding-obfs-mode: true}\n",
 		},
 		{
 			name:   "uplink-data-header-default-key",
-			gap:    "uplink-data-key has no Xray default",
 			stream: trXHTTPServer(trTLSServer, `,"mode":"packet-up","uplinkDataPlacement":"header","scMaxEachPostBytes":3000`),
 			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, uplink-data-placement: header, sc-max-each-post-bytes: 3000, sc-min-posts-interval-ms: 1}\n",
 		},
@@ -135,7 +133,6 @@ xhttp-opts:
 		},
 		{
 			name:   "uplink-data-cookie-default-key-get",
-			gap:    "uplink-data-key has no Xray default",
 			stream: trXHTTPServer(trTLSServer, `,"mode":"packet-up","uplinkDataPlacement":"cookie","uplinkHTTPMethod":"GET","scMaxEachPostBytes":3000`),
 			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, uplink-data-placement: cookie, uplink-http-method: GET, sc-max-each-post-bytes: 3000, sc-min-posts-interval-ms: 1}\n",
 		},
@@ -166,9 +163,18 @@ xhttp-opts:
 		},
 		{
 			name:   "path-with-query",
-			gap:    "a query in path is escaped into the path",
 			stream: trXHTTPServer(trTLSServer, ""),
 			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: \"/xh?token=abc\", mode: packet-up}\n",
+		},
+		{
+			name:   "path-with-query-stream-up-meta-in-query",
+			stream: trXHTTPServer(trTLSServer, `,"sessionIDPlacement":"query"`),
+			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: \"/xh?token=abc\", mode: stream-up, session-placement: query}\n",
+		},
+		{
+			name:   "lower-case-uplink-method",
+			stream: trXHTTPServer(trTLSServer, `,"uplinkHTTPMethod":"put"`),
+			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, uplink-http-method: put}\n",
 		},
 		{
 			name:   "host-and-headers",

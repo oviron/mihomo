@@ -493,8 +493,12 @@ func StreamWebsocketConn(ctx context.Context, conn net.Conn, c *WebsocketConfig)
 	if u, err := url.Parse(c.Path); err == nil {
 		if q := u.Query(); q.Get("ed") != "" {
 			if ed, err := strconv.Atoi(q.Get("ed")); err == nil {
-				c.MaxEarlyData = ed
-				c.EarlyDataHeaderName = "Sec-WebSocket-Protocol"
+				if c.V2rayHttpUpgrade { // Xray's HTTPUpgrade takes early data right after the request, not in a header
+					c.V2rayHttpUpgradeFastOpen = c.V2rayHttpUpgradeFastOpen || ed > 0
+				} else {
+					c.MaxEarlyData = ed
+					c.EarlyDataHeaderName = "Sec-WebSocket-Protocol"
+				}
 				q.Del("ed")
 				u.RawQuery = q.Encode()
 				c.Path = u.String()

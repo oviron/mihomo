@@ -156,6 +156,7 @@ type HTTP2Options struct {
 type GrpcOptions struct {
 	GrpcServiceName string `proxy:"grpc-service-name,omitempty"`
 	GrpcUserAgent   string `proxy:"grpc-user-agent,omitempty"`
+	Authority       string `proxy:"authority,omitempty"`
 	PingInterval    int    `proxy:"ping-interval,omitempty"`
 	MaxConnections  int    `proxy:"max-connections,omitempty"`
 	MinStreams      int    `proxy:"min-streams,omitempty"`
@@ -611,6 +612,7 @@ func NewVmess(option VmessOption) (*Vmess, error) {
 			UserAgent:    option.GrpcOpts.GrpcUserAgent,
 			Host:         option.ServerName,
 			PingInterval: option.GrpcOpts.PingInterval,
+			Authority:    option.GrpcOpts.Authority,
 		}
 		if option.ServerName == "" {
 			gunConfig.Host = v.addr
