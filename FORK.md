@@ -580,14 +580,26 @@ publishes gzipped `linux-arm64` and `darwin-arm64` binaries named like upstream
 assets (`mihomo-linux-arm64-<tag>.gz`) with `SHA256SUMS`. The upstream build
 workflows are disabled in this repository.
 
+Releases are built with Go 1.27. `go.mod` still declares Go 1.20 like
+upstream, and an older Go builds everything but the check behind
+`reality-opts.mldsa65-verify`, which is then a config error.
+
+What the fork changes in `go.mod`: the `replace` of `github.com/metacubex/utls`
+with `github.com/oviron/utls`, and one new module,
+`github.com/yuin/gopher-lua` v1.1.1, for the Lua scripts of the `noise` mask.
+
 ## New upstream release
 
 ```sh
 git fetch upstream --tags
-git rebase --onto vNEW vOLD oviron
+git rebase --rebase-merges --onto vNEW vOLD oviron
 go mod tidy && go build ./...
+# the tests of the section Tests, against the Xray-core binary
 git tag vNEW-oviron.1 && git push origin oviron vNEW-oviron.1
 ```
 
-When upstream moves to a utls with Firefox 158 of its own, the fork is no longer
-needed.
+The fork touches upstream files in few places, listed under
+[finalmask](#finalmask) for the masks; the rest of its code is in files and
+packages of its own. When upstream moves to a utls with Firefox 158 and
+Chrome 155 of its own, the `replace` can go; the Xray-core parity part stays
+until upstream has it.
