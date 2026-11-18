@@ -19,12 +19,15 @@ What that means for `client-fingerprint`:
 | `chrome155` | — | Chrome 155, with X25519MLKEM768 |
 | `firefox120` | Firefox 120 | Firefox 120, same ClientHello |
 | `safari` | Safari 26.3 | Safari 26.3 |
-| `random` | chrome, safari, ios, firefox weighted 6/3/2/1, picked once per process | same weights, with the `firefox` above |
+| `random` | chrome, safari, ios, firefox weighted 6/3/2/1, picked once per process | same weights, with the `firefox` above; over REALITY with `support-x25519mlkem768` never `ios` |
 
 Firefox 158 is the ClientHello of current Firefox stable in normal browsing mode.
 It carries X25519MLKEM768, so Xray REALITY servers from 26.9 on accept it. Over
 REALITY, mihomo strips that key share unless the proxy sets
 `reality-opts.support-x25519mlkem768: true`, in upstream and here alike.
+With that option `random` picks only among the fingerprints that carry the key
+share (chrome, safari, firefox): Xray answers the `ios` ClientHello, which has
+none, with the fallback site.
 
 `chrome155` is the one name the fork adds: Chrome 155 on macOS as
 refraction-networking/utls captured it, the default fingerprint of Xray-core

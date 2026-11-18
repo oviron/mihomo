@@ -36,14 +36,22 @@ func (entry *reuseEntry) close() {
 type ReuseTransport struct {
 	entry   *reuseEntry
 	removed atomic.Bool
+	xmux    *xmuxState // set with the semantics of Xray, see xmux.go
 }
 
 func (rt *ReuseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if rt.xmux != nil {
+		return rt.xmux.roundTrip(req)
+	}
 	return rt.entry.transport.RoundTrip(req)
 }
 
 func (rt *ReuseTransport) Close() error {
 	if !rt.removed.CompareAndSwap(false, true) {
+		return nil
+	}
+	if rt.xmux != nil {
+		rt.xmux.close()
 		return nil
 	}
 	rt.entry.release()
@@ -59,6 +67,8 @@ type ReuseManager struct {
 	hMaxRequestTimes Range
 	hMaxReusableSecs Range
 	maker            TransportMaker
+	xray             bool // the semantics of Xray, see xmux.go
+	closed           bool
 	mu               sync.Mutex
 	entries          []*reuseEntry
 }
@@ -66,6 +76,9 @@ type ReuseManager struct {
 func NewReuseManager(cfg *ReuseConfig, makeTransport TransportMaker) (*ReuseManager, error) {
 	if cfg == nil {
 		return nil, nil
+	}
+	if err := cfg.applyXmuxDefaults(); err != nil {
+		return nil, err
 	}
 	concurrency, connections, err := cfg.ResolveManagerConfig()
 	if err != nil {
@@ -82,6 +95,7 @@ func NewReuseManager(cfg *ReuseConfig, makeTransport TransportMaker) (*ReuseMana
 		hMaxRequestTimes: hMaxRequestTimes,
 		hMaxReusableSecs: hMaxReusableSecs,
 		maker:            makeTransport,
+		xray:             cfg.XraySemantics,
 		entries:          make([]*reuseEntry, 0),
 	}, nil
 }
@@ -97,6 +111,7 @@ func (m *ReuseManager) Close() error {
 		entry.close()
 	}
 	m.entries = nil
+	m.closed = true
 	return nil
 }
 
@@ -104,6 +119,12 @@ func (m *ReuseManager) cleanupLocked(now time.Time) {
 	kept := m.entries[:0]
 	for _, entry := range m.entries {
 		if entry.isClosed() {
+			continue
+		}
+		if m.xray && entry.usedUp(now) { // leaves the pool at once, see xmux.go
+			if entry.openUsage.Load() == 0 {
+				entry.close()
+			}
 			continue
 		}
 		if entry.leftRequests.Load() <= 0 && entry.openUsage.Load() == 0 {
@@ -154,6 +175,9 @@ func (m *ReuseManager) pickLocked() *reuseEntry {
 		if m.maxConcurrency > 0 && int(entry.openUsage.Load()) >= m.maxConcurrency {
 			continue
 		}
+		if m.xray && entry.expired(time.Now()) {
+			continue
+		}
 		if best == nil || entry.openUsage.Load() < best.openUsage.Load() {
 			best = entry
 		}
@@ -185,6 +209,12 @@ func (m *ReuseManager) newEntryLocked(transport http.RoundTripper, now time.Time
 	if m.cMaxReuseTimes.Max > 0 {
 		entry.maxReuseTimes = int32(m.cMaxReuseTimes.Rand())
 	}
+	if m.xray {
+		entry.reuseCount.Store(1) // the first use counts
+		if entry.leftRequests.Load() <= 0 {
+			entry.leftRequests.Store(1<<30 - 1) // a range from 0 can pick "no limit"
+		}
+	}
 
 	m.entries = append(m.entries, entry)
 	return entry
@@ -214,6 +244,9 @@ func (m *ReuseManager) GetTransport() http.RoundTripper {
 	}
 
 	entry.openUsage.Add(1)
+	if m.xray { // requests are counted as they are sent
+		return &ReuseTransport{entry: entry, xmux: newXmuxState(m, entry)}
+	}
 	if entry.leftRequests.Load() > 0 {
 		entry.leftRequests.Add(-1)
 	}

@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"encoding/binary"
 	"errors"
+	"hash"
 	"net"
 	"strings"
 	"time"
@@ -33,12 +34,21 @@ type RealityConfig struct {
 	ShortID   [RealityMaxShortIDLen]byte
 
 	SupportX25519MLKEM768 bool
+
+	// Mldsa65Verify is the ML-DSA-65 public key of the server. When set, the
+	// server must also prove itself with the signature made by mldsa65Seed.
+	Mldsa65Verify []byte
+
+	// ClientVersion is what the server compares with its minClientVer and
+	// maxClientVer, 1.8.2 when nil.
+	ClientVersion *[3]byte
 }
 
 func GetRealityConn(ctx context.Context, conn net.Conn, fingerprint UClientHelloID, serverName string, realityConfig *RealityConfig) (net.Conn, error) {
 	for retry := 0; ; retry++ {
 		verifier := &realityVerifier{
-			serverName: serverName,
+			serverName:    serverName,
+			mldsa65Verify: realityConfig.Mldsa65Verify,
 		}
 		uConfig := &utls.Config{
 			Time:                   ntp.Now,
@@ -74,6 +84,9 @@ func GetRealityConn(ctx context.Context, conn net.Conn, fingerprint UClientHello
 		hello.SessionId[0] = 1
 		hello.SessionId[1] = 8
 		hello.SessionId[2] = 2
+		if realityConfig.ClientVersion != nil {
+			copy(hello.SessionId, realityConfig.ClientVersion[:])
+		}
 
 		//log.Debugln("REALITY hello.sessionId[:16]: %v", hello.SessionId[:16])
 
@@ -169,6 +182,8 @@ type realityVerifier struct {
 	serverName string
 	authKey    []byte
 	verified   bool
+
+	mldsa65Verify []byte
 }
 
 func (c *realityVerifier) VerifyConnection(state utls.ConnectionState) error {
@@ -177,7 +192,7 @@ func (c *realityVerifier) VerifyConnection(state utls.ConnectionState) error {
 	if pub, ok := certs[0].PublicKey.(ed25519.PublicKey); ok {
 		h := hmac.New(sha512.New, c.authKey)
 		h.Write(pub)
-		if bytes.Equal(h.Sum(nil), certs[0].Signature) {
+		if bytes.Equal(h.Sum(nil), certs[0].Signature) && c.verifyMLDSA65(h, certs[0]) {
 			c.verified = true
 			return nil
 		}
@@ -194,4 +209,19 @@ func (c *realityVerifier) VerifyConnection(state utls.ConnectionState) error {
 		return err
 	}
 	return nil
+}
+
+// verifyMLDSA65 checks the signature a server with mldsa65Seed puts into the
+// first extension of its certificate, over the HMAC state h extended with
+// both hellos. It passes when no key is configured.
+func (c *realityVerifier) verifyMLDSA65(h hash.Hash, cert *x509.Certificate) bool {
+	if len(c.mldsa65Verify) == 0 {
+		return true
+	}
+	if len(cert.Extensions) == 0 {
+		return false
+	}
+	h.Write(c.HandshakeState.Hello.Raw)
+	h.Write(c.HandshakeState.ServerHello.Raw)
+	return verifyMLDSA65(c.mldsa65Verify, h.Sum(nil), cert.Extensions[0].Value) == nil
 }

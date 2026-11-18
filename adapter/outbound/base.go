@@ -194,6 +194,7 @@ func (b *Base) Close() error {
 type BasicOption struct {
 	TFO         bool        `proxy:"tfo,omitempty"`
 	MPTCP       bool        `proxy:"mptcp,omitempty"`
+	Sockopt     Sockopt     `proxy:"sockopt,omitempty"`
 	Interface   string      `proxy:"interface-name,omitempty"`
 	RoutingMark int         `proxy:"routing-mark,omitempty"`
 	IPVersion   C.DNSPrefer `proxy:"ip-version,omitempty"`
@@ -201,6 +202,9 @@ type BasicOption struct {
 
 	// FinalMask is the Xray-core finalmask applied to the connection to the server, see transport/finalmask.
 	FinalMask map[string]any `proxy:"finalmask,omitempty"`
+
+	// StreamSettings puts a transport under any proxy protocol, see stream_settings.go.
+	StreamSettings *StreamSettings `proxy:"stream-settings,omitempty"`
 
 	//
 	// The following parameters are used internally, assign value by the structure decoder are disallowed
@@ -211,6 +215,7 @@ type BasicOption struct {
 }
 
 func (b *BasicOption) NewDialer(opts []dialer.Option) C.Dialer {
+	opts = b.dialSockopt().appendTo(opts)
 	cDialer := b.DialerForAPI
 	if cDialer == nil {
 		if b.DialerProxy != "" {
@@ -221,6 +226,9 @@ func (b *BasicOption) NewDialer(opts []dialer.Option) C.Dialer {
 	}
 	if b.FinalMask != nil {
 		cDialer = finalmask.NewDialer(cDialer, b.FinalMask)
+	}
+	if b.StreamSettings != nil { // the outermost layer: the masks stay the last one before the wire
+		cDialer = b.StreamSettings.wrap(cDialer, opts)
 	}
 	return cDialer
 }

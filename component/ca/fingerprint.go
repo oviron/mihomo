@@ -12,6 +12,11 @@ import (
 
 // NewFingerprintVerifier returns a function that verifies whether a certificate's SHA-256 fingerprint matches the given one.
 func NewFingerprintVerifier(fingerprint string, time func() time.Time) (func(certs []*x509.Certificate, serverName string) error, error) {
+	if pins := splitList(fingerprint); len(pins) > 1 {
+		return newFingerprintListVerifier(pins, time)
+	} else if len(pins) == 1 {
+		fingerprint = pins[0]
+	}
 	switch fingerprint {
 	case "chrome", "firefox", "safari", "ios", "android", "edge", "360", "qq", "random", "randomized": // WTF???
 		return nil, fmt.Errorf("`fingerprint` is used for TLS certificate pinning. If you need to specify the browser fingerprint, use `client-fingerprint`")
@@ -26,7 +31,7 @@ func NewFingerprintVerifier(fingerprint string, time func() time.Time) (func(cer
 		return nil, fmt.Errorf("fingerprint string length error,need sha256 fingerprint")
 	}
 
-	return func(certs []*x509.Certificate, serverName string) error {
+	return anyServerName(func(certs []*x509.Certificate, serverName string) error {
 		// ssl pining
 		for i, cert := range certs {
 			hash := sha256.Sum256(cert.Raw)
@@ -53,7 +58,7 @@ func NewFingerprintVerifier(fingerprint string, time func() time.Time) (func(cer
 			}
 		}
 		return errNotMatch
-	}, nil
+	}), nil
 }
 
 // CalculateFingerprint computes the SHA-256 fingerprint of the given DER-encoded certificate and returns it as a hex string.

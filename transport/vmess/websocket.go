@@ -21,6 +21,7 @@ import (
 	"github.com/metacubex/mihomo/component/ech"
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/transport/xhttp"
 
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
@@ -409,6 +410,7 @@ func streamWebsocketConn(ctx context.Context, conn net.Conn, c *WebsocketConfig,
 		request.Host = host
 	}
 	request.Header.Del("Host")
+	xhttp.ApplyBrowserAlias(request.Header) // User-Agent: chrome and the like, as in Xray-core
 
 	var secKey string
 	if !c.V2rayHttpUpgrade {
@@ -493,8 +495,12 @@ func StreamWebsocketConn(ctx context.Context, conn net.Conn, c *WebsocketConfig)
 	if u, err := url.Parse(c.Path); err == nil {
 		if q := u.Query(); q.Get("ed") != "" {
 			if ed, err := strconv.Atoi(q.Get("ed")); err == nil {
-				c.MaxEarlyData = ed
-				c.EarlyDataHeaderName = "Sec-WebSocket-Protocol"
+				if c.V2rayHttpUpgrade { // Xray's HTTPUpgrade takes early data right after the request, not in a header
+					c.V2rayHttpUpgradeFastOpen = c.V2rayHttpUpgradeFastOpen || ed > 0
+				} else {
+					c.MaxEarlyData = ed
+					c.EarlyDataHeaderName = "Sec-WebSocket-Protocol"
+				}
 				q.Del("ed")
 				u.RawQuery = q.Encode()
 				c.Path = u.String()

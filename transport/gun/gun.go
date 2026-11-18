@@ -22,6 +22,7 @@ import (
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/vmess"
+	"github.com/metacubex/mihomo/transport/xhttp"
 
 	"github.com/metacubex/http"
 )
@@ -65,6 +66,7 @@ type Config struct {
 	ServiceName  string
 	UserAgent    string
 	Host         string
+	Authority    string // overrides Host when set, Xray's grpcSettings.authority
 	PingInterval int
 }
 
@@ -335,12 +337,16 @@ func (t *Transport) Dial() (net.Conn, error) {
 		serviceName = t.cfg.ServiceName
 	}
 	path := ServiceNameToPath(serviceName)
+	host := t.cfg.Host
+	if t.cfg.Authority != "" {
+		host = t.cfg.Authority
+	}
 
 	reader, writer := io.Pipe()
 
 	header := defaultHeader.Clone()
-	if t.cfg.UserAgent != "" {
-		header.Set("User-Agent", t.cfg.UserAgent)
+	if userAgent := xhttp.UserAgentAlias(t.cfg.UserAgent); userAgent != "" { // chrome, firefox, edge, golang as in Xray-core
+		header.Set("User-Agent", userAgent)
 	}
 
 	request := &http.Request{
@@ -348,10 +354,10 @@ func (t *Transport) Dial() (net.Conn, error) {
 		Body:   reader,
 		URL: &url.URL{
 			Scheme: "https",
-			Host:   t.cfg.Host,
+			Host:   host,
 			Path:   path,
 			// for unescape path
-			Opaque: "//" + t.cfg.Host + path,
+			Opaque: "//" + host + path,
 		},
 		Proto:      "HTTP/2",
 		ProtoMajor: 2,

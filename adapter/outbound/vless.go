@@ -19,6 +19,7 @@ import (
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/gun"
+	"github.com/metacubex/mihomo/transport/hystream"
 	"github.com/metacubex/mihomo/transport/jls"
 	"github.com/metacubex/mihomo/transport/restls"
 	"github.com/metacubex/mihomo/transport/shadowtls"
@@ -27,6 +28,7 @@ import (
 	"github.com/metacubex/mihomo/transport/vless/encryption"
 	"github.com/metacubex/mihomo/transport/vless/vision"
 	"github.com/metacubex/mihomo/transport/vmess"
+	"github.com/metacubex/mihomo/transport/xdrive"
 	"github.com/metacubex/mihomo/transport/xhttp"
 
 	"github.com/metacubex/http"
@@ -49,6 +51,10 @@ type Vless struct {
 	gunClient *gun.Client
 	// for xhttp
 	xhttpClient *xhttp.Client
+	// for the hysteria transport
+	hysteriaClient *hystream.Client
+	// for the xdrive transport
+	xdriveClient *xdrive.Client
 
 	echConfig       *ech.Config
 	shadowTLSConfig *shadowtls.Config
@@ -85,6 +91,9 @@ type VlessOption struct {
 	GrpcOpts          GrpcOptions       `proxy:"grpc-opts,omitempty"`
 	WSOpts            WSOptions         `proxy:"ws-opts,omitempty"`
 	XHTTPOpts         XHTTPOptions      `proxy:"xhttp-opts,omitempty"`
+	MKCPOpts          MKCPOptions       `proxy:"mkcp-opts,omitempty"`
+	HysteriaOpts      HyStreamOptions   `proxy:"hysteria-opts,omitempty"`
+	XDriveOpts        XDriveOptions     `proxy:"xdrive-opts,omitempty"`
 	WSHeaders         map[string]string `proxy:"ws-headers,omitempty"`
 	SkipCertVerify    bool              `proxy:"skip-cert-verify,omitempty"`
 	NameCertVerify    string            `proxy:"name-cert-verify,omitempty"`
@@ -121,7 +130,9 @@ type XHTTPOptions struct {
 	UplinkChunkSize      string                 `proxy:"uplink-chunk-size,omitempty"`
 	ScMaxEachPostBytes   string                 `proxy:"sc-max-each-post-bytes,omitempty"`
 	ScMinPostsIntervalMs string                 `proxy:"sc-min-posts-interval-ms,omitempty"`
+	PipelinePosts        bool                   `proxy:"pipeline-posts,omitempty"`
 	ReuseSettings        *XHTTPReuseSettings    `proxy:"reuse-settings,omitempty"` // aka XMUX
+	Xmux                 *XHTTPReuseSettings    `proxy:"xmux,omitempty"`           // the same with the semantics of Xray
 	DownloadSettings     *XHTTPDownloadSettings `proxy:"download-settings,omitempty"`
 }
 
@@ -140,6 +151,8 @@ type XHTTPDownloadSettings struct {
 	Host          *string             `proxy:"host,omitempty"`
 	Headers       *map[string]string  `proxy:"headers,omitempty"`
 	ReuseSettings *XHTTPReuseSettings `proxy:"reuse-settings,omitempty"` // aka XMUX
+	Xmux          *XHTTPReuseSettings `proxy:"xmux,omitempty"`
+	XHTTPDownloadXHTTPOptions
 	// proxy part
 	Server            *string           `proxy:"server,omitempty"`
 	Port              *int              `proxy:"port,omitempty"`
@@ -262,6 +275,10 @@ func (v *Vless) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.M
 		break // already handle in dialContext
 	case "xhttp":
 		break // already handle in dialContext
+	case "hysteria":
+		break // already handle in dialContext
+	case "xdrive":
+		break // already handle in dialContext
 	default:
 		// default tcp network
 		// handle TLS
@@ -352,6 +369,12 @@ func (v *Vless) dialContext(ctx context.Context) (c net.Conn, err error) {
 		return v.gunClient.Dial()
 	case "xhttp":
 		return v.xhttpClient.Dial(ctx)
+	case "mkcp", "kcp":
+		return dialMKCP(ctx, v.dialer, v.addr, v.option.MKCPOpts)
+	case "hysteria":
+		return v.hysteriaClient.Dial(ctx)
+	case "xdrive":
+		return v.xdriveClient.Dial(ctx)
 	default:
 	}
 	return v.dialer.DialContext(ctx, "tcp", v.addr)
@@ -431,6 +454,12 @@ func (v *Vless) Close() error {
 		if err := v.gunClient.Close(); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	if v.hysteriaClient != nil {
+		_ = v.hysteriaClient.Close()
+	}
+	if v.xdriveClient != nil {
+		_ = v.xdriveClient.Close()
 	}
 	if v.xhttpClient != nil {
 		if err := v.xhttpClient.Close(); err != nil {
@@ -593,6 +622,7 @@ func NewVless(option VlessOption) (*Vless, error) {
 			UserAgent:    option.GrpcOpts.GrpcUserAgent,
 			Host:         option.ServerName,
 			PingInterval: option.GrpcOpts.PingInterval,
+			Authority:    option.GrpcOpts.Authority,
 		}
 		if option.ServerName == "" {
 			gunConfig.Host = v.addr
@@ -657,6 +687,9 @@ func NewVless(option VlessOption) (*Vless, error) {
 			}
 			hKeepAlivePeriod = time.Duration(option.XHTTPOpts.ReuseSettings.HKeepAlivePeriod) * time.Second
 		}
+		if option.XHTTPOpts.Xmux != nil {
+			reuseCfg, hKeepAlivePeriod = option.XHTTPOpts.Xmux.build()
+		}
 
 		cfg := &xhttp.Config{
 			Host:                 requestHost,
@@ -682,6 +715,7 @@ func NewVless(option VlessOption) (*Vless, error) {
 			UplinkChunkSize:      v.option.XHTTPOpts.UplinkChunkSize,
 			ScMaxEachPostBytes:   v.option.XHTTPOpts.ScMaxEachPostBytes,
 			ScMinPostsIntervalMs: v.option.XHTTPOpts.ScMinPostsIntervalMs,
+			PipelinePosts:        v.option.XHTTPOpts.PipelinePosts,
 			ReuseConfig:          reuseCfg,
 		}
 
@@ -846,6 +880,10 @@ func NewVless(option VlessOption) (*Vless, error) {
 				}
 				downloadHKeepAlivePeriod = time.Duration(ds.ReuseSettings.HKeepAlivePeriod) * time.Second
 			}
+			if ds.Xmux != nil {
+				downloadCfg.ReuseConfig, downloadHKeepAlivePeriod = ds.Xmux.build()
+			}
+			ds.XHTTPDownloadXHTTPOptions.apply(&downloadCfg)
 
 			cfg.DownloadConfig = &downloadCfg
 
@@ -932,6 +970,32 @@ func NewVless(option VlessOption) (*Vless, error) {
 		}
 
 		v.xhttpClient, err = xhttp.NewClient(cfg, makeTransport, makeDownloadTransport, v.realityConfig != nil)
+		if err != nil {
+			return nil, err
+		}
+	case "xdrive":
+		v.xdriveClient, err = newXDriveClient(&option, xdriveHTTPClient(v.dialer, v.option, v.echConfig))
+		if err != nil {
+			return nil, err
+		}
+	case "hysteria":
+		v.hysteriaClient, err = newHysteriaTransport(hysteriaTransport{
+			Base: v.Base, Basic: &v.option.BasicOption, Dialer: v.dialer, Server: option.Server, Port: option.Port,
+			TLS: option.TLS, ALPN: option.ALPN, Options: &v.option.HysteriaOpts,
+			TLSConfig: vmess.TLSConfig{
+				Host:           option.ServerName,
+				SkipCertVerify: option.SkipCertVerify,
+				NameCertVerify: option.NameCertVerify,
+				FingerPrint:    option.Fingerprint,
+				Certificate:    option.Certificate,
+				PrivateKey:     option.PrivateKey,
+				ECH:            v.echConfig,
+				ShadowTLS:      v.shadowTLSConfig,
+				Restls:         v.restlsConfig,
+				JLS:            v.jlsConfig,
+				Reality:        v.realityConfig,
+			},
+		})
 		if err != nil {
 			return nil, err
 		}
