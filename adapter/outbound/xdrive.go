@@ -1,15 +1,26 @@
 package outbound
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"net"
+	"time"
 
+	"github.com/metacubex/mihomo/component/ech"
+	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/transport/vmess"
 	"github.com/metacubex/mihomo/transport/xdrive"
+
+	"github.com/metacubex/http"
 )
 
 // XDriveOptions is `xdrive-opts`, the client part of xdriveSettings of
 // Xray-core, for `network: xdrive`: the stream goes through objects in a
 // storage, see transport/xdrive. `server` and `port` of the proxy are not
-// dialed.
+// dialed; the storage is reached at the address of its URL, through the dialer
+// of the proxy and with its TLS options. `template` is the template object of
+// Xray-core as it is, keys included.
 type XDriveOptions struct {
 	Service           string           `proxy:"service,omitempty"` // s3, template or local
 	RemoteFolder      string           `proxy:"remote-folder,omitempty"`
@@ -56,6 +67,13 @@ func newXDriveClient(option *VlessOption, httpClient xdrive.HTTPDoer) (*xdrive.C
 		HoleTimeoutMs:     opts.HoleTimeoutMs,
 		HTTPClient:        httpClient,
 	}
+	if opts.Template != nil {
+		template, err := json.Marshal(opts.Template)
+		if err != nil {
+			return nil, err
+		}
+		cfg.Template = string(template)
+	}
 	if opts.S3 != nil {
 		cfg.S3 = &xdrive.S3Config{
 			Endpoint:  opts.S3.Endpoint,
@@ -65,4 +83,51 @@ func newXDriveClient(option *VlessOption, httpClient xdrive.HTTPDoer) (*xdrive.C
 		}
 	}
 	return xdrive.NewClient(cfg)
+}
+
+// xdriveHTTPClient is how the s3 and template services reach the storage: over
+// the dialer of the proxy, with its client fingerprint and certificate
+// options. servername, when set, replaces the host of the URL in the TLS
+// handshake. Redirects are not followed: a signed request is for one host.
+func xdriveHTTPClient(dialer C.Dialer, option *VlessOption, ech *ech.Config) *http.Client {
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return dialer.DialContext(ctx, "tcp", addr)
+	}
+	return &http.Client{
+		Timeout: 60 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Transport: &http.Transport{
+			DialContext: dial,
+			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				conn, err := dial(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+				host, _, _ := net.SplitHostPort(addr)
+				if option.ServerName != "" {
+					host = option.ServerName
+				}
+				tlsConn, err := vmess.StreamTLSConn(ctx, conn, &vmess.TLSConfig{
+					Host:              host,
+					SkipCertVerify:    option.SkipCertVerify,
+					NameCertVerify:    option.NameCertVerify,
+					FingerPrint:       option.Fingerprint,
+					Certificate:       option.Certificate,
+					PrivateKey:        option.PrivateKey,
+					ClientFingerprint: option.ClientFingerprint,
+					NextProtos:        []string{"http/1.1"},
+					ECH:               ech,
+				})
+				if err != nil {
+					_ = conn.Close()
+					return nil, err
+				}
+				return tlsConn, nil
+			},
+			MaxIdleConnsPerHost: 64,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
 }

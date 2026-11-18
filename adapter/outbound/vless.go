@@ -951,7 +951,7 @@ func NewVless(option VlessOption) (*Vless, error) {
 			return nil, err
 		}
 	case "xdrive":
-		v.xdriveClient, err = newXDriveClient(&option, nil)
+		v.xdriveClient, err = newXDriveClient(&option, xdriveHTTPClient(v.dialer, v.option, v.echConfig))
 		if err != nil {
 			return nil, err
 		}
