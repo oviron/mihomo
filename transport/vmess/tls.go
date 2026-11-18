@@ -113,6 +113,7 @@ func StreamTLSConn(ctx context.Context, conn net.Conn, cfg *TLSConfig) (net.Conn
 
 	if clientFingerprint, ok := tlsC.GetFingerprint(cfg.ClientFingerprint); ok {
 		if cfg.Reality != nil {
+			clientFingerprint = tlsC.RealityFingerprint(cfg.ClientFingerprint, clientFingerprint, cfg.Reality)
 			return tlsC.GetRealityConn(ctx, conn, clientFingerprint, tlsConfig.ServerName, cfg.Reality)
 		}
 		tlsConfig := tlsC.UConfig(tlsConfig)
