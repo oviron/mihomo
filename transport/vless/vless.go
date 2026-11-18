@@ -4,6 +4,7 @@ import (
 	"net"
 
 	"github.com/metacubex/mihomo/common/utils"
+	"github.com/metacubex/mihomo/transport/vless/vision"
 
 	"github.com/gofrs/uuid/v5"
 )
@@ -44,6 +45,8 @@ type DstAddr struct {
 type Client struct {
 	uuid   uuid.UUID
 	Addons *Addons
+
+	Testseed *vision.Testseed // nil keeps the built-in vision padding
 }
 
 // StreamConn return a Conn with net.Conn and DstAddr

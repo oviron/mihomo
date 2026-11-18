@@ -232,8 +232,8 @@ func checkVisionDirect(t *testing.T, x *xray) {
 		}
 		return false
 	}
-	require.True(t, hasDirect(visionClientBlocks(x)), "client must switch to direct copy")
-	require.True(t, hasDirect(visionServerBlocks(x)), "server must switch to direct copy")
+	x.waitFor(t, "client must switch to direct copy", func() bool { return hasDirect(visionClientBlocks(x)) })
+	x.waitFor(t, "server must switch to direct copy", func() bool { return hasDirect(visionServerBlocks(x)) })
 }
 
 // TestVlessRoute checks that bytes 6-7 of the UUID sent by the client reach
