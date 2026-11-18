@@ -35,9 +35,25 @@ func TestTransportREALITY(t *testing.T) {
 		},
 		{
 			name:   "min-client-ver",
+			stream: trRawServer(withOpt(`,"minClientVer":"26.3.27","maxClientVer":"26.11.9"`)),
+			client: trRealityClient + "  client-version: 26.11.9\n",
+		},
+		{
+			name:   "min-client-ver-default-version",
 			stream: trRawServer(withOpt(`,"minClientVer":"26.3.27"`)),
 			client: trRealityClient,
-			gap:    "mihomo reports client version 1.8.2",
+			gap:    "by design: the reported version stays 1.8.2 unless client-version is set",
+		},
+		{
+			name:   "max-client-ver",
+			stream: trRawServer(withOpt(`,"maxClientVer":"25.12.31"`)),
+			client: trRealityClient + "  client-version: 26.11.9\n",
+			gap:    "not a gap: the server refuses a newer client",
+		},
+		{
+			name:   "client-version-zero",
+			stream: trRawServer(withOpt(`,"maxClientVer":"0.0.0"`)),
+			client: trRealityClient + "  client-version: 0.0.0\n",
 		},
 		{
 			name:   "max-time-diff",

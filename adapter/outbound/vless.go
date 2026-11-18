@@ -583,6 +583,7 @@ func NewVless(option VlessOption) (*Vless, error) {
 			UserAgent:    option.GrpcOpts.GrpcUserAgent,
 			Host:         option.ServerName,
 			PingInterval: option.GrpcOpts.PingInterval,
+			Authority:    option.GrpcOpts.Authority,
 		}
 		if option.ServerName == "" {
 			gunConfig.Host = v.addr
