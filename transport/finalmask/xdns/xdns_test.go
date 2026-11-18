@@ -1144,23 +1144,32 @@ func TestStalledResolver(t *testing.T) {
 				}
 			}
 		}()
-		connections := func() int {
-			server.mu.Lock()
-			defer server.mu.Unlock()
-			return server.tcpConns
+		// Every query carries a datagram of 100 bytes, so they are all of one
+		// size: the length prefix, the header, the name, the type and the
+		// class. 2000 bytes per connection are 9 of them and a part.
+		perConn := func() int {
+			return 2000 / (2 + 12 + server.queries[0].wire + 4)
 		}
-		eventually(t, func() bool { return connections() >= 5 }, "the connection is replaced after a write that timed out")
-		// 2000 bytes per connection are 11 queries of 172 bytes and a part;
-		// the server may still be reading what the first connections carried
+		// Every connection before the last one has brought all its whole
+		// queries, the last one may still be at it.
 		eventually(t, func() bool {
 			server.mu.Lock()
 			defer server.mu.Unlock()
-			return len(server.queries) >= 4*11
-		}, "the queries of the replaced connections arrive whole")
+			if server.tcpConns < 5 || len(server.queries) == 0 {
+				return false
+			}
+			for _, n := range server.tcpQueries[:server.tcpConns-1] {
+				if n != perConn() {
+					return false
+				}
+			}
+			return true
+		}, "the connection is replaced after a write that timed out")
 		server.mu.Lock()
 		defer server.mu.Unlock()
 		require.Zero(t, server.badFrames)
-		require.LessOrEqual(t, len(server.queries), server.tcpConns*11)
+		require.Equal(t, 9, perConn())
+		require.LessOrEqual(t, server.tcpQueries[server.tcpConns-1], perConn())
 	})
 
 	// The other resolvers go on getting queries meanwhile.
@@ -1301,13 +1310,16 @@ func TestReadDeadline(t *testing.T) {
 	_, _, err := pc.ReadFrom(make([]byte, 10))
 	require.ErrorIs(t, err, os.ErrDeadlineExceeded)
 	// a deadline set while the read waits
+	set := make(chan struct{})
 	go func() {
+		defer close(set)
 		time.Sleep(50 * time.Millisecond)
 		_ = pc.SetDeadline(time.Now())
 	}()
 	require.NoError(t, pc.SetReadDeadline(time.Time{}))
 	_, _, err = pc.ReadFrom(make([]byte, 10))
 	require.ErrorIs(t, err, os.ErrDeadlineExceeded)
+	<-set // the read ends as soon as its own deadline is set
 	_, err = pc.WriteTo([]byte("late"), nil)
 	require.ErrorIs(t, err, os.ErrDeadlineExceeded, "SetDeadline is for writes too")
 	require.NoError(t, pc.SetDeadline(time.Time{}))

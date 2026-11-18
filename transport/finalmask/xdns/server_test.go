@@ -59,7 +59,10 @@ type testServer struct {
 	pending   [][]byte
 	received  chan []byte
 	tcpConns  int // TCP connections taken
-	badFrames int // messages of TCP connections that are no queries
+	// tcpQueries is how many queries each TCP connection has brought, in
+	// the order the connections were taken.
+	tcpQueries []int
+	badFrames  int // messages of TCP connections that are no queries
 }
 
 func newTestServer(t *testing.T, names ...string) *testServer {
@@ -271,7 +274,9 @@ func (s *testServer) listenTCP(t *testing.T, closeAfter int) string {
 			}
 			t.Cleanup(func() { _ = conn.Close() })
 			s.mu.Lock()
+			index := s.tcpConns
 			s.tcpConns++
+			s.tcpQueries = append(s.tcpQueries, 0)
 			s.mu.Unlock()
 			go func() {
 				defer conn.Close()
@@ -291,6 +296,9 @@ func (s *testServer) listenTCP(t *testing.T, closeAfter int) string {
 						s.mu.Unlock()
 						continue
 					}
+					s.mu.Lock()
+					s.tcpQueries[index]++
+					s.mu.Unlock()
 					if _, err := conn.Write(append(binary.BigEndian.AppendUint16(nil, uint16(len(answer))), answer...)); err != nil {
 						return
 					}
