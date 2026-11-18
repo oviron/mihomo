@@ -128,8 +128,11 @@ func newConn(localAddr, remoteAddr net.Addr, conv uint16, writer packetWriter, c
 		flushNotify:   make(chan struct{}, 1),
 		done:          make(chan struct{}),
 	}
-	if c.mss < 576 {
+	if c.mss < 576 && !cfg.Raw { // Xray-core 26.x has no lower bound, a tunnel mask may need a small MTU
 		c.mss = 576
+	}
+	if c.mss < 1 {
+		c.mss = 1
 	}
 	go c.flushLoop()
 	return c

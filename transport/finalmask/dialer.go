@@ -236,3 +236,16 @@ func (c *packetNetConn) Write(p []byte) (int, error) {
 func (c *packetNetConn) RemoteAddr() net.Addr {
 	return c.remote
 }
+
+// CheckMKCP rejects the mKCP options that can't work together. raw tells that
+// the transport sends bare mKCP, obfuscated that it was given a seed or a
+// header of its own.
+func CheckMKCP(dialer C.Dialer, raw, obfuscated bool) error {
+	if raw && obfuscated {
+		return fmt.Errorf("mkcp-opts: raw can't be used together with seed or header")
+	}
+	if config := ConfigOf(dialer); config != nil && config.MKCPLegacy && !raw {
+		return fmt.Errorf("finalmask: the mkcp-legacy mask needs mkcp-opts: {raw: true}, the packets would be obfuscated twice otherwise")
+	}
+	return nil
+}
