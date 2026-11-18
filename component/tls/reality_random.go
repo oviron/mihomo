@@ -27,11 +27,11 @@ func hasX25519MLKEM768(fingerprint UClientHelloID) bool {
 	return false
 }
 
-// randomHybridFingerprint is the pick of "random" among the fingerprints that
-// carry X25519MLKEM768, made once like randomFingerprint.
-var randomHybridFingerprint = once.OnceValue(func() UClientHelloID {
-	if fingerprint := randomFingerprint(); hasX25519MLKEM768(fingerprint) {
-		return fingerprint
+// hybridFingerprint returns picked when its ClientHello carries X25519MLKEM768
+// and otherwise picks, with the weights of "random", among those that do.
+func hybridFingerprint(picked UClientHelloID) UClientHelloID {
+	if hasX25519MLKEM768(picked) {
+		return picked
 	}
 	var choices []weightedrand.Choice[string, int]
 	for _, choice := range []weightedrand.Choice[string, int]{ // the weights of randomFingerprint
@@ -46,11 +46,17 @@ var randomHybridFingerprint = once.OnceValue(func() UClientHelloID {
 	}
 	chooser, err := weightedrand.NewChooser(choices...)
 	if err != nil {
-		return randomFingerprint()
+		return picked
 	}
 	name := chooser.Pick()
 	log.Debugln("random HelloID for REALITY with X25519MLKEM768:%s", name)
 	return fingerprints[name]
+}
+
+// randomHybridFingerprint is hybridFingerprint of the "random" pick, made
+// once per process like that pick.
+var randomHybridFingerprint = once.OnceValue(func() UClientHelloID {
+	return hybridFingerprint(randomFingerprint())
 })
 
 // RealityFingerprint returns the fingerprint to use for REALITY. It is the one
