@@ -21,6 +21,7 @@ import (
 	"github.com/metacubex/mihomo/component/ech"
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/transport/xhttp"
 
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
@@ -409,6 +410,7 @@ func streamWebsocketConn(ctx context.Context, conn net.Conn, c *WebsocketConfig,
 		request.Host = host
 	}
 	request.Header.Del("Host")
+	xhttp.ApplyBrowserAlias(request.Header) // User-Agent: chrome and the like, as in Xray-core
 
 	var secKey string
 	if !c.V2rayHttpUpgrade {

@@ -22,6 +22,7 @@ import (
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/transport/vmess"
+	"github.com/metacubex/mihomo/transport/xhttp"
 
 	"github.com/metacubex/http"
 )
@@ -345,7 +346,7 @@ func (t *Transport) Dial() (net.Conn, error) {
 
 	header := defaultHeader.Clone()
 	if t.cfg.UserAgent != "" {
-		header.Set("User-Agent", t.cfg.UserAgent)
+		header.Set("User-Agent", xhttp.UserAgentAlias(t.cfg.UserAgent)) // chrome, firefox, edge as in Xray-core
 	}
 
 	request := &http.Request{

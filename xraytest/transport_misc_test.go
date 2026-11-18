@@ -93,6 +93,11 @@ func TestTransportWebSocket(t *testing.T) {
 			client: trTLSClient + "network: ws\nws-opts: {path: /ws}\n",
 		},
 		{
+			name:   "browser-headers",
+			stream: `"network":"ws","wsSettings":{"path":"/ws"},` + trTLSServer,
+			client: trTLSClient + "network: ws\nws-opts: {path: /ws, headers: {User-Agent: chrome}}\n",
+		},
+		{
 			name:   "utls-chrome",
 			stream: `"network":"ws","wsSettings":{"path":"/ws"},` + trTLSServer,
 			client: trTLSClient + "client-fingerprint: chrome\nnetwork: ws\nws-opts: {path: /ws}\n",

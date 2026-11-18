@@ -1,6 +1,10 @@
 package xhttp
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/metacubex/http"
+)
 
 // This file holds what makes the client read its options the way Xray-core
 // reads the matching xhttpSettings.
@@ -48,4 +52,29 @@ func (c *Config) applyXrayDefaults() {
 	}
 	c.UplinkHTTPMethod = strings.ToUpper(c.UplinkHTTPMethod)
 	c.DownloadConfig.applyXrayDefaults()
+}
+
+// ApplyBrowserAlias gives the headers of a WebSocket or HTTPUpgrade request
+// the look of a browser when User-Agent is one of the names Xray-core takes
+// there: chrome, firefox, safari, edge, curl or golang. Xray-core does the same
+// and takes chrome when there is no User-Agent at all; here a request without
+// one stays as it always was.
+func ApplyBrowserAlias(header http.Header) {
+	if len(header.Values("User-Agent")) > 0 {
+		TryDefaultHeadersWith(header, "ws")
+	}
+}
+
+// UserAgentAlias resolves the names Xray-core takes for the user agent of
+// gRPC: chrome, firefox and edge. Anything else is returned as it is.
+func UserAgentAlias(userAgent string) string {
+	switch userAgent {
+	case "chrome":
+		return ChromeUA
+	case "firefox":
+		return FirefoxUA
+	case "edge":
+		return MSEdgeUA
+	}
+	return userAgent
 }
