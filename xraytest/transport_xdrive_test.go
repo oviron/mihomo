@@ -8,7 +8,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -318,4 +321,121 @@ func TestTransportXDriveTemplate(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Empty(t, store.failed, "requests the storage refused")
 	require.Greater(t, store.puts, 10)
+}
+
+// trMinIO runs MinIO, a real S3 implementation, over HTTPS with the
+// certificate of the key material and one bucket. MINIO_BIN names its binary:
+//
+//	docker create --name m cgr.dev/chainguard/minio && docker cp m:/usr/bin/minio /tmp/minio && docker rm m
+func trMinIO(t *testing.T, bucket string) (endpoint string) {
+	t.Helper()
+	bin := os.Getenv("MINIO_BIN")
+	if bin == "" {
+		t.Skip("MINIO_BIN is not set, skip the check against a real S3 service")
+	}
+	m := trGetMaterial(t)
+	dir := t.TempDir()
+	certs, data := filepath.Join(dir, "certs"), filepath.Join(dir, "data")
+	require.NoError(t, os.MkdirAll(certs, 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(data, bucket), 0o700)) // a folder of the data dir is a bucket
+	for from, to := range map[string]string{m.certFile: "public.crt", m.keyFile: "private.key"} {
+		content, err := os.ReadFile(from)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(certs, to), content, 0o600))
+	}
+
+	ports := freePorts(t, 2)
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(ports[0]))
+	cmd := exec.Command(bin, "server", "--quiet", "--address", addr,
+		"--console-address", net.JoinHostPort("127.0.0.1", strconv.Itoa(ports[1])), "--certs-dir", certs, data)
+	cmd.Env = append(os.Environ(), "MINIO_ROOT_USER="+trS3AccessKey, "MINIO_ROOT_PASSWORD="+trS3SecretKey, "MINIO_REGION=us-east-1", "HOME="+dir)
+	log := &syncBuffer{}
+	cmd.Stdout, cmd.Stderr = log, log
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_, _ = cmd.Process.Wait()
+		if t.Failed() {
+			t.Logf("minio log:\n%s", log.String())
+		}
+	})
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			_ = conn.Close()
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("minio did not start:\n%s", log.String())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return "https://" + addr
+}
+
+// A real S3 service over HTTPS: MinIO checks the signatures of both sides,
+// which reach one bucket; Xray-core pins its certificate, the client pins it
+// too or looks like a browser doing so.
+func TestTransportXDriveMinIO(t *testing.T) {
+	tg := startTargets(t)
+	endpoint := trMinIO(t, "tunnel")
+	pin := trGetMaterial(t).certSHA256
+	secrets := []string{trS3AccessKey, trS3SecretKey}
+	s3 := obj{"endpoint": endpoint, "region": "us-east-1", "bucket": "tunnel"}
+
+	decryption, encryption := trVlessEnc(t)
+	startXray(t, obj{
+		"listen": "127.0.0.1", "port": freePort(t), "protocol": "vless",
+		"settings": obj{"clients": []obj{{"id": userUUID}}, "decryption": decryption},
+		"streamSettings": obj{
+			"network": "xdrive", "security": "tls",
+			"tlsSettings":    obj{"pinnedPeerCertSha256": pin},
+			"xdriveSettings": obj{"service": "s3", "remoteFolder": "sessions of xray", "secrets": secrets, "s3": s3},
+		},
+	})
+
+	for name, tlsOptions := range map[string]map[string]any{
+		"pinned":           {"fingerprint": pin},
+		"skip-cert-verify": {"skip-cert-verify": true},
+		"chrome":           {"fingerprint": pin, "client-fingerprint": "chrome"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mapping := map[string]any{
+				"name": "xray", "type": "vless", "uuid": userUUID, "encryption": encryption,
+				"server": "storage.invalid", "port": 443,
+				"network": "xdrive",
+				"xdrive-opts": map[string]any{
+					"service": "s3", "remote-folder": "sessions of xray", "secrets": secrets, "s3": map[string]any(s3),
+				},
+			}
+			for k, v := range tlsOptions {
+				mapping[k] = v
+			}
+			proxy, err := adapter.ParseProxy(mapping)
+			require.NoError(t, err)
+			defer proxy.Close()
+			trXDriveCheck(t, proxy, tg)
+		})
+	}
+
+	// without a way to trust the certificate the client does not get through
+	proxy, err := adapter.ParseProxy(map[string]any{
+		"name": "xray", "type": "vless", "uuid": userUUID, "encryption": encryption,
+		"server": "storage.invalid", "port": 443, "network": "xdrive",
+		"xdrive-opts": map[string]any{"service": "s3", "remote-folder": "sessions of xray", "secrets": secrets, "s3": map[string]any(s3)},
+	})
+	require.NoError(t, err)
+	defer proxy.Close()
+	require.Error(t, trRoundTrip(proxy, tg, 16, 10*time.Second))
+
+	// nor with the wrong secret key
+	proxy, err = adapter.ParseProxy(map[string]any{
+		"name": "xray", "type": "vless", "uuid": userUUID, "encryption": encryption, "fingerprint": pin,
+		"server": "storage.invalid", "port": 443, "network": "xdrive",
+		"xdrive-opts": map[string]any{"service": "s3", "remote-folder": "sessions of xray", "secrets": []string{trS3AccessKey, "wrong"}, "s3": map[string]any(s3)},
+	})
+	require.NoError(t, err)
+	defer proxy.Close()
+	require.ErrorContains(t, trRoundTrip(proxy, tg, 16, 10*time.Second), "SignatureDoesNotMatch")
 }
