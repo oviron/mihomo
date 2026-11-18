@@ -26,6 +26,7 @@ import (
 	"github.com/metacubex/mihomo/transport/vless"
 	"github.com/metacubex/mihomo/transport/vless/encryption"
 	"github.com/metacubex/mihomo/transport/vmess"
+	"github.com/metacubex/mihomo/transport/xdrive"
 	"github.com/metacubex/mihomo/transport/xhttp"
 
 	"github.com/metacubex/http"
@@ -50,6 +51,8 @@ type Vless struct {
 	xhttpClient *xhttp.Client
 	// for the hysteria transport
 	hysteriaClient *hystream.Client
+	// for the xdrive transport
+	xdriveClient *xdrive.Client
 
 	echConfig       *ech.Config
 	shadowTLSConfig *shadowtls.Config
@@ -85,6 +88,7 @@ type VlessOption struct {
 	XHTTPOpts         XHTTPOptions      `proxy:"xhttp-opts,omitempty"`
 	MKCPOpts          MKCPOptions       `proxy:"mkcp-opts,omitempty"`
 	HysteriaOpts      HyStreamOptions   `proxy:"hysteria-opts,omitempty"`
+	XDriveOpts        XDriveOptions     `proxy:"xdrive-opts,omitempty"`
 	WSHeaders         map[string]string `proxy:"ws-headers,omitempty"`
 	SkipCertVerify    bool              `proxy:"skip-cert-verify,omitempty"`
 	NameCertVerify    string            `proxy:"name-cert-verify,omitempty"`
@@ -266,6 +270,8 @@ func (v *Vless) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.M
 		break // already handle in dialContext
 	case "hysteria":
 		break // already handle in dialContext
+	case "xdrive":
+		break // already handle in dialContext
 	default:
 		// default tcp network
 		// handle TLS
@@ -358,6 +364,8 @@ func (v *Vless) dialContext(ctx context.Context) (c net.Conn, err error) {
 		return dialMKCP(ctx, v.dialer, v.addr, v.option.MKCPOpts)
 	case "hysteria":
 		return v.hysteriaClient.Dial(ctx)
+	case "xdrive":
+		return v.xdriveClient.Dial(ctx)
 	default:
 	}
 	return v.dialer.DialContext(ctx, "tcp", v.addr)
@@ -440,6 +448,9 @@ func (v *Vless) Close() error {
 	}
 	if v.hysteriaClient != nil {
 		_ = v.hysteriaClient.Close()
+	}
+	if v.xdriveClient != nil {
+		_ = v.xdriveClient.Close()
 	}
 	if v.xhttpClient != nil {
 		if err := v.xhttpClient.Close(); err != nil {
@@ -936,6 +947,11 @@ func NewVless(option VlessOption) (*Vless, error) {
 		}
 
 		v.xhttpClient, err = xhttp.NewClient(cfg, makeTransport, makeDownloadTransport, v.realityConfig != nil)
+		if err != nil {
+			return nil, err
+		}
+	case "xdrive":
+		v.xdriveClient, err = newXDriveClient(&option, nil)
 		if err != nil {
 			return nil, err
 		}
