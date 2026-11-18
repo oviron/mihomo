@@ -12,6 +12,7 @@ import (
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/component/generator"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/transport/socks5"
 	vlessenc "github.com/metacubex/mihomo/transport/vless/encryption"
 
 	"github.com/stretchr/testify/require"
@@ -424,6 +425,23 @@ func TestSocks5(t *testing.T) {
 	checkTCP(t, proxy, tg)
 	checkUDP(t, proxy, tg)
 	checkUDPFullCone(t, proxy, tg)
+}
+
+// TestSocks5Rejected expects the server's refusal to reach the caller: an
+// inbound without UDP answers UDP ASSOCIATE with "command not supported".
+func TestSocks5Rejected(t *testing.T) {
+	tg := startTargets(t)
+	port := freePort(t)
+	startXray(t, inbound("socks", port, obj{"auth": "noauth", "udp": false}, nil))
+	proxy := newProxy(t, obj{"type": "socks5", "port": port, "udp": true})
+	checkTCP(t, proxy, tg)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	pc, err := proxy.ListenPacketContext(ctx, udpMetadata(tg.udp))
+	if err == nil {
+		_ = pc.Close()
+	}
+	require.ErrorIs(t, err, socks5.ErrCommandNotSupported)
 }
 
 func TestHTTP(t *testing.T) {
