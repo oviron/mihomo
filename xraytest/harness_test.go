@@ -39,7 +39,7 @@ const xrayVersion = "26.11.9"
 
 const userUUID = "b831381d-6324-4d53-ad4f-8cda48b30811"
 
-var tlsCertificate, tlsPrivateKey, _, _ = ca.NewRandomTLSKeyPair(ca.KeyPairTypeP256)
+var tlsCertificate, tlsPrivateKey, tlsFingerprint, _ = ca.NewRandomTLSKeyPair(ca.KeyPairTypeP256)
 
 type obj = map[string]any
 
@@ -163,19 +163,16 @@ func startXrayConfig(t *testing.T, cfg obj) *xray {
 	})
 
 	deadline := time.Now().Add(20 * time.Second)
-	for !strings.Contains(x.log.String(), "started") {
+	for !strings.Contains(x.log.String(), "Xray "+xrayVersion+" started") { // "Logger started" comes earlier
 		select {
 		case <-exited:
 			t.Fatalf("xray exited early:\n%s\n%s", config, x.log.String())
 		default:
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("xray did not start:\n%s", x.log.String())
+			t.Fatalf("Xray %s did not start:\n%s", xrayVersion, x.log.String())
 		}
 		time.Sleep(50 * time.Millisecond)
-	}
-	if !strings.Contains(x.log.String(), "Xray "+xrayVersion+" ") {
-		t.Fatalf("XRAY_BIN is not Xray %s:\n%s", xrayVersion, x.log.String())
 	}
 	return x
 }

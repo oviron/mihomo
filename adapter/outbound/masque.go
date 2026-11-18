@@ -85,6 +85,10 @@ type MasqueOption struct {
 	Host    string            `proxy:"host,omitempty"`
 	Path    string            `proxy:"path,omitempty"`
 	Headers map[string]string `proxy:"headers,omitempty"`
+
+	ClientFingerprint string     `proxy:"client-fingerprint,omitempty"` // for network: h2
+	Fingerprint       string     `proxy:"fingerprint,omitempty"`
+	ECHOpts           ECHOptions `proxy:"ech-opts,omitempty"`
 }
 
 func (option MasqueOption) Prefixes() ([]netip.Prefix, error) {

@@ -129,3 +129,29 @@ tunnel is lost, the next connection sets it up again.
 On the wire it is HTTP/3 to a web server with a real certificate, and carries
 IP packets: TCP and UDP both work, UDP without a full cone guarantee (the
 server opens a socket per flow).
+
+### MASQUE over HTTP/2 (`network: h2`)
+
+```yaml
+- name: masque-h2
+  type: masque
+  network: h2
+  client-fingerprint: chrome
+  # the rest as above
+```
+
+The same tunnel over HTTP/2: TCP and TLS all the way, for networks where UDP
+does not get through. IP packets travel as DATAGRAM capsules (RFC 9297) in the
+bodies of an extended CONNECT. The server is an Xray `masque` inbound whose TLS
+settings offer `h2`. `client-fingerprint` makes the TLS handshake that of a
+browser.
+
+### TLS and DNS of the tunnel
+
+Both transports take `sni`, `skip-cert-verify`, `fingerprint` (the SHA-256 pin
+of the server certificate) and `ech-opts` (`enable`, `config`), with the
+meaning they have on other proxies. `remote-dns-resolve: true` with `dns:`
+resolves names through the tunnel, like Xray's `remoteDNS`.
+
+Not ported: Xray's `xmux` for MASQUE (several tunnels at once and their
+rotation). One outbound keeps one tunnel and sets it up again when it is lost.
