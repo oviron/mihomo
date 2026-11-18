@@ -65,6 +65,9 @@ type ReuseConfig struct {
 	CMaxReuseTimes   string
 	HMaxRequestTimes string
 	HMaxReusableSecs string
+
+	// XraySemantics reads the settings the way Xray-core reads xmux, see xmux.go.
+	XraySemantics bool
 }
 
 func (c *Config) NormalizedMode() string {

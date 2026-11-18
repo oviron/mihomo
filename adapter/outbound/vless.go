@@ -115,6 +115,7 @@ type XHTTPOptions struct {
 	ScMaxEachPostBytes   string                 `proxy:"sc-max-each-post-bytes,omitempty"`
 	ScMinPostsIntervalMs string                 `proxy:"sc-min-posts-interval-ms,omitempty"`
 	ReuseSettings        *XHTTPReuseSettings    `proxy:"reuse-settings,omitempty"` // aka XMUX
+	Xmux                 *XHTTPReuseSettings    `proxy:"xmux,omitempty"`           // the same with the semantics of Xray
 	DownloadSettings     *XHTTPDownloadSettings `proxy:"download-settings,omitempty"`
 }
 
@@ -133,6 +134,8 @@ type XHTTPDownloadSettings struct {
 	Host          *string             `proxy:"host,omitempty"`
 	Headers       *map[string]string  `proxy:"headers,omitempty"`
 	ReuseSettings *XHTTPReuseSettings `proxy:"reuse-settings,omitempty"` // aka XMUX
+	Xmux          *XHTTPReuseSettings `proxy:"xmux,omitempty"`
+	XHTTPDownloadXHTTPOptions
 	// proxy part
 	Server            *string           `proxy:"server,omitempty"`
 	Port              *int              `proxy:"port,omitempty"`
@@ -638,6 +641,9 @@ func NewVless(option VlessOption) (*Vless, error) {
 			}
 			hKeepAlivePeriod = time.Duration(option.XHTTPOpts.ReuseSettings.HKeepAlivePeriod) * time.Second
 		}
+		if option.XHTTPOpts.Xmux != nil {
+			reuseCfg, hKeepAlivePeriod = option.XHTTPOpts.Xmux.build()
+		}
 
 		cfg := &xhttp.Config{
 			Host:                 requestHost,
@@ -824,6 +830,10 @@ func NewVless(option VlessOption) (*Vless, error) {
 				}
 				downloadHKeepAlivePeriod = time.Duration(ds.ReuseSettings.HKeepAlivePeriod) * time.Second
 			}
+			if ds.Xmux != nil {
+				downloadCfg.ReuseConfig, downloadHKeepAlivePeriod = ds.Xmux.build()
+			}
+			ds.XHTTPDownloadXHTTPOptions.apply(&downloadCfg)
 
 			cfg.DownloadConfig = &downloadCfg
 

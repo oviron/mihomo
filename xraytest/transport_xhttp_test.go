@@ -187,6 +187,26 @@ xhttp-opts:
 			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, download-settings: {server: 127.0.0.1, port: %PORT%, path: /xh}}\n",
 		},
 		{
+			name:   "xmux-defaults",
+			stream: trXHTTPServer(trTLSServer, ""),
+			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, xmux: {}}\n",
+		},
+		{
+			name:   "xmux-rotates-on-request-limit",
+			stream: trXHTTPServer(trTLSServer, `,"scMaxEachPostBytes":65536`),
+			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, sc-max-each-post-bytes: 65536, sc-min-posts-interval-ms: 1, xmux: {max-connections: \"1\", h-max-request-times: \"5-8\"}}\n",
+		},
+		{
+			name:   "xmux-stream-up-h3",
+			stream: trXHTTPServer(strings.Replace(trTLSServer, "%TLS%", `,"alpn":["h3"]`, 1), ""),
+			client: trTLSClient + "alpn: [h3]\nnetwork: xhttp\nxhttp-opts: {path: /xh, mode: stream-up, xmux: {max-concurrency: 16-32, h-max-request-times: \"3\"}}\n",
+		},
+		{
+			name:   "xmux-download-settings",
+			stream: trXHTTPServer(trTLSServer, ""),
+			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, download-settings: {server: 127.0.0.1, port: %PORT%, xmux: {max-connections: \"1\"}}}\n",
+		},
+		{
 			name:   "reuse-settings",
 			stream: trXHTTPServer(trTLSServer, ""),
 			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh, mode: packet-up, reuse-settings: {max-connections: \"2\", h-max-request-times: 50-100, h-max-reusable-secs: 1800-3000, h-keep-alive-period: 30}}\n",

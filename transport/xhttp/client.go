@@ -293,6 +293,14 @@ func NewClient(cfg *Config, makeTransport TransportMaker, makeDownloadTransport 
 			client.makeDownloadTransport = client.downloadManager.GetTransport
 		}
 	}
+	if client.downloadManager == nil && makeDownloadTransport != nil && cfg.DownloadConfig != nil && cfg.DownloadConfig.ReuseConfig != nil {
+		// the download leg may be pooled on its own
+		client.downloadManager, err = NewReuseManager(cfg.DownloadConfig.ReuseConfig, makeDownloadTransport)
+		if err != nil {
+			return nil, err
+		}
+		client.makeDownloadTransport = client.downloadManager.GetTransport
+	}
 	return client, nil
 }
 
