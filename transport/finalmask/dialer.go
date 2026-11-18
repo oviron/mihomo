@@ -249,3 +249,19 @@ func CheckMKCP(dialer C.Dialer, raw, obfuscated bool) error {
 	}
 	return nil
 }
+
+// DialerFor returns the dialer for a connection that has a finalmask option
+// of its own, such as the download server of XHTTP: the masks of raw over
+// what base dials with underneath its own masks. A nil raw gives that
+// unmasked dialer. Unlike NewDialer it reports a broken option at once.
+func DialerFor(base C.Dialer, raw map[string]any) (C.Dialer, error) {
+	inner := Raw(base)
+	if raw == nil {
+		return inner, nil
+	}
+	config, err := Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	return &Dialer{inner: inner, config: config}, nil
+}

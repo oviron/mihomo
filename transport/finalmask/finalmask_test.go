@@ -243,6 +243,34 @@ func TestNoMasksIsTheInnerDialer(t *testing.T) {
 	require.Nil(t, ConfigOf(plain{}))
 }
 
+// A connection with a finalmask of its own gets those masks and not the
+// ones of the outbound.
+func TestDialerFor(t *testing.T) {
+	server, err := net.ListenPacket("udp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer server.Close()
+	serverAddr := server.LocalAddr().(*net.UDPAddr).AddrPort()
+	outbound := NewDialer(plain{}, map[string]any{"udp": masks("test-a"), "quic-params": map[string]any{"congestion": "reno"}})
+
+	own, err := DialerFor(outbound, map[string]any{"udp": masks("test-b")})
+	require.NoError(t, err)
+	pc, err := own.ListenPacket(context.Background(), "udp", "", serverAddr)
+	require.NoError(t, err)
+	defer pc.Close()
+	_, err = pc.WriteTo([]byte("data"), server.LocalAddr())
+	require.NoError(t, err)
+	got, _ := readPacket(t, server)
+	require.Equal(t, "bdata", string(got))
+	require.Nil(t, QuicParamsOf(own))
+
+	none, err := DialerFor(outbound, nil)
+	require.NoError(t, err)
+	require.Equal(t, plain{}, none)
+
+	_, err = DialerFor(outbound, map[string]any{"udp": masks("no-such-mask")})
+	require.Error(t, err)
+}
+
 func TestBrokenOption(t *testing.T) {
 	for name, raw := range map[string]map[string]any{
 		"unknown mask":     {"tcp": masks("no-such-mask")},
