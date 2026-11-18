@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/metacubex/mihomo/component/ca"
 	"github.com/metacubex/mihomo/component/resolver"
 	"github.com/metacubex/mihomo/transport/finalmask/mask"
 
@@ -43,24 +42,10 @@ type Options struct {
 	URL         string   `mask:"url,omitempty"`
 	STUNServers []string `mask:"stun-servers,omitempty"`
 	// TLSConfig is for the connection to the rendezvous server.
-	TLSConfig TLSOptions `mask:"tls-config,omitempty"`
+	TLSConfig mask.TLSOptions `mask:"tls-config,omitempty"`
 	// IPMode is "dual" (default), "v4" or "v6".
 	IPMode      string             `mask:"ip-mode,omitempty"`
 	PortMapping PortMappingOptions `mask:"port-mapping,omitempty"`
-}
-
-// TLSOptions are the tls-config fields that are supported. A config that
-// sets any other field is rejected: it would ask for a check of the server
-// that is not made.
-type TLSOptions struct {
-	ServerName string   `mask:"server-name,omitempty"`
-	ALPN       []string `mask:"alpn,omitempty"`
-	// PinnedPeerCertSha256 is the hex SHA-256 of the server certificate,
-	// VerifyPeerCertByName a name the certificate is checked against instead
-	// of the server name.
-	PinnedPeerCertSha256 string         `mask:"pinned-peer-cert-sha256,omitempty"`
-	VerifyPeerCertByName string         `mask:"verify-peer-cert-by-name,omitempty"`
-	Other                map[string]any `mask:",remain"`
 }
 
 // PortMappingOptions is there to tell that the setting is not supported.
@@ -142,25 +127,12 @@ func New(settings map[string]any) (*Mask, error) {
 	default:
 		m.ipv4, m.ipv6 = true, true
 	}
-	for key, value := range options.TLSConfig.Other {
-		if value == nil || value == false || value == "" {
-			continue
-		}
-		return nil, fmt.Errorf("tls-config: %q is not supported", key)
+	// checked for plain HTTP too: a tls-config there is a mistake worth telling
+	if m.tlsConfig, err = options.TLSConfig.Config(u.Hostname()); err != nil {
+		return nil, err
 	}
-	if scheme == "https" {
-		serverName := options.TLSConfig.ServerName
-		if serverName == "" {
-			serverName = u.Hostname()
-		}
-		m.tlsConfig, err = ca.GetTLSConfig(ca.Option{
-			TLSConfig:      &tls.Config{ServerName: serverName, NextProtos: options.TLSConfig.ALPN},
-			Fingerprint:    options.TLSConfig.PinnedPeerCertSha256,
-			NameCertVerify: options.TLSConfig.VerifyPeerCertByName,
-		})
-		if err != nil {
-			return nil, err
-		}
+	if scheme != "https" {
+		m.tlsConfig = nil
 	}
 	return m, nil
 }
