@@ -143,6 +143,10 @@ func NewHysteria2(option Hysteria2Option) (*Hysteria2, error) {
 		option: &option,
 	}
 	outbound.dialer = option.NewDialer(outbound.DialOptions())
+	if err := finalmask.CheckHysteria2(outbound.dialer, option.Ports != "", option.RealmOpts.Enable); err != nil {
+		return nil, err
+	}
+	quicParams := finalmask.QuicParamsOf(outbound.dialer) // nil without finalmask.quic-params
 
 	var salamanderPassword string
 	var geckoPassword string
@@ -205,6 +209,7 @@ func NewHysteria2(option Hysteria2Option) (*Hysteria2, error) {
 		InitialConnectionReceiveWindow: option.InitialConnectionReceiveWindow,
 		MaxConnectionReceiveWindow:     option.MaxConnectionReceiveWindow,
 	}
+	quicParams.ApplyTo(quicConfig)
 
 	clientOptions := hysteria2.ClientOptions{
 		Context:            context.TODO(),
@@ -234,6 +239,7 @@ func NewHysteria2(option Hysteria2Option) (*Hysteria2, error) {
 		},
 		HandshakeTimeout: time.Duration(option.HandshakeTimeout) * time.Second,
 	}
+	quicParams.ApplyHysteria2(&clientOptions, option.CWND)
 
 	var serverPorts []uint16
 	if option.Ports != "" {

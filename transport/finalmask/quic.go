@@ -29,9 +29,12 @@ const (
 type QuicParams struct {
 	Congestion string
 	BBRProfile string
-	// BrutalUp and BrutalDown are bytes per second.
-	BrutalUp   uint64
-	BrutalDown uint64
+	// BrutalUp and BrutalDown are bytes per second. The Set flags tell that
+	// the setting was given, be it zero.
+	BrutalUp      uint64
+	BrutalDown    uint64
+	BrutalUpSet   bool
+	BrutalDownSet bool
 
 	InitStreamReceiveWindow     uint64
 	MaxStreamReceiveWindow      uint64
@@ -117,6 +120,8 @@ func parseQuicParams(raw map[string]any) (*QuicParams, error) {
 		BBRProfile:                  profile,
 		BrutalUp:                    up,
 		BrutalDown:                  down,
+		BrutalUpSet:                 strings.TrimSpace(r.BrutalUp) != "",
+		BrutalDownSet:               strings.TrimSpace(r.BrutalDown) != "",
 		InitStreamReceiveWindow:     uint64(r.InitStreamReceiveWindow),
 		MaxStreamReceiveWindow:      uint64(r.MaxStreamReceiveWindow),
 		InitConnectionReceiveWindow: uint64(r.InitConnectionReceiveWindow),
@@ -191,7 +196,29 @@ func (p *QuicParams) ApplyTo(config *quic.Config) {
 	if p.DisablePathMTUDiscovery {
 		config.DisablePathMTUDiscovery = true
 	}
+}
+
+// HTTP3Config returns the config to dial a connection that carries HTTP/3
+// with: a copy of config with the parameters applied, the number of streams
+// the server may open among them. The config itself is shared by the dials
+// and must not change.
+func (p *QuicParams) HTTP3Config(config *quic.Config) *quic.Config {
+	if p == nil || config == nil {
+		return config
+	}
+	config = config.Clone()
+	p.ApplyTo(config)
 	if p.MaxIncomingStreams != 0 {
 		config.MaxIncomingStreams = p.MaxIncomingStreams
 	}
+	return config
+}
+
+// CheckHTTP3 rejects the congestion control that only Hysteria negotiates
+// for a transport that runs over HTTP/3, which the ALPN list tells.
+func (p *QuicParams) CheckHTTP3(alpn []string) error {
+	if p != nil && p.Congestion == CongestionBrutal && len(alpn) == 1 && alpn[0] == "h3" {
+		return fmt.Errorf(`finalmask: quic-params: congestion "brutal" is negotiated by Hysteria only, over HTTP/3 use bbr, reno or force-brutal`)
+	}
+	return nil
 }

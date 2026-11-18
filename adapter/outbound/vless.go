@@ -613,6 +613,9 @@ func NewVless(option VlessOption) (*Vless, error) {
 			option.GrpcOpts.MaxStreams,
 		)
 	case "xhttp":
+		if err := finalmask.QuicParamsOf(v.dialer).CheckHTTP3(option.ALPN); err != nil {
+			return nil, err
+		}
 		requestHost := v.option.XHTTPOpts.Host
 		if requestHost == "" {
 			if v.option.ServerName != "" {
@@ -706,10 +709,13 @@ func NewVless(option VlessOption) (*Vless, error) {
 					if err != nil {
 						return nil, err
 					}
+					quicParams := finalmask.QuicParamsOf(v.dialer) // nil without finalmask.quic-params
+					cfg = quicParams.HTTP3Config(cfg)
 					_, quicConn, err := common.DialQuic(ctx, v.addr, v.DialOptions(), v.dialer, tlsConfig, cfg, common.DialQuicOption{Early: true})
 					if err != nil {
 						return nil, err
 					}
+					quicParams.ApplyCongestion(quicConn, 0)
 					return quicConn, nil
 				},
 				v.option.ALPN,
