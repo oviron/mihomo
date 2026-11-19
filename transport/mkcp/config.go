@@ -16,6 +16,7 @@ type Config struct {
 	ReadBuffer       uint32
 	Seed             string
 	Header           string
+	Raw              bool // no obfuscation and no header at all, as mKCP of Xray-core since 26.x; Seed and Header are ignored
 }
 
 func (c Config) mtu() uint32 {
@@ -85,6 +86,9 @@ func (c Config) receivingBufferSize() uint32 {
 }
 
 func (c Config) security() (cipher.AEAD, error) {
+	if c.Raw {
+		return nil, nil
+	}
 	if c.Seed == "" {
 		return newSimpleAuthenticator(), nil
 	}
@@ -97,5 +101,8 @@ func (c Config) security() (cipher.AEAD, error) {
 }
 
 func (c Config) packetHeader() packetHeader {
+	if c.Raw {
+		return nil
+	}
 	return newPacketHeader(c.Header)
 }

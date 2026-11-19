@@ -58,6 +58,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/yosida95/uritemplate/v3 v3.0.2
+	github.com/yuin/gopher-lua v1.1.1
 	gitlab.com/go-extension/aes-ccm v0.0.0-20230221065045-e58665ef23c7
 	go.uber.org/automaxprocs v1.6.0
 	go.yaml.in/yaml/v3 v3.0.5
