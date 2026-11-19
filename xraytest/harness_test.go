@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ const xrayVersion = "26.11.9"
 
 const userUUID = "b831381d-6324-4d53-ad4f-8cda48b30811"
 
-var tlsCertificate, tlsPrivateKey, _, _ = ca.NewRandomTLSKeyPair(ca.KeyPairTypeP256)
+var tlsCertificate, tlsPrivateKey, tlsFingerprint, _ = ca.NewRandomTLSKeyPair(ca.KeyPairTypeP256)
 
 type obj = map[string]any
 
@@ -70,7 +71,8 @@ func (b *syncBuffer) String() string {
 
 // xray is a running Xray-core process.
 type xray struct {
-	log *syncBuffer
+	log  *syncBuffer
+	stop func() // ends the process the way a service manager does
 }
 
 // count returns how many times the debug log contains substr.
@@ -78,7 +80,9 @@ func (x *xray) count(substr string) int {
 	return strings.Count(x.log.String(), substr)
 }
 
-// waitFor waits until cond holds for the debug log, which Xray writes with a delay.
+// waitFor waits until cond holds for the debug log, which Xray writes with a
+// delay. Xray drops log lines when it logs faster than they are written out,
+// so a check of the log belongs before a bulk transfer through a logging path.
 func (x *xray) waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -141,6 +145,15 @@ func startXrayConfig(t *testing.T, cfg obj) *xray {
 		_ = cmd.Wait()
 		close(exited)
 	}()
+	x.stop = func() {
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		select {
+		case <-exited:
+		case <-time.After(5 * time.Second):
+			_ = cmd.Process.Kill()
+			<-exited
+		}
+	}
 	t.Cleanup(func() {
 		_ = cmd.Process.Kill()
 		<-exited
@@ -150,19 +163,16 @@ func startXrayConfig(t *testing.T, cfg obj) *xray {
 	})
 
 	deadline := time.Now().Add(20 * time.Second)
-	for !strings.Contains(x.log.String(), "started") {
+	for !strings.Contains(x.log.String(), "Xray "+xrayVersion+" started") { // "Logger started" comes earlier
 		select {
 		case <-exited:
 			t.Fatalf("xray exited early:\n%s\n%s", config, x.log.String())
 		default:
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("xray did not start:\n%s", x.log.String())
+			t.Fatalf("Xray %s did not start:\n%s", xrayVersion, x.log.String())
 		}
 		time.Sleep(50 * time.Millisecond)
-	}
-	if !strings.Contains(x.log.String(), "Xray "+xrayVersion+" ") {
-		t.Fatalf("XRAY_BIN is not Xray %s:\n%s", xrayVersion, x.log.String())
 	}
 	return x
 }
