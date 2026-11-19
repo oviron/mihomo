@@ -61,4 +61,6 @@ jobs:
           cd dist && sha256sum mihomo-*.gz > SHA256SUMS && cd ..
           printf 'Upstream MetaCubeX/mihomo %s with `%s` in place of metacubex/utls.\n\nSee FORK.md for what differs.\n' \
             "$base" "$utls" > notes.md
-          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md
+          # a release of the full line never becomes the latest one
+          latest=true; case "$GITHUB_REF_NAME" in *-full*) latest=false ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md --latest="$latest"
