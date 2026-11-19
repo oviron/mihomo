@@ -201,6 +201,11 @@ type trCase struct {
 	// gap, when set, says why the pair is known not to work: the round trip
 	// must fail, and the case fails once it starts to pass.
 	gap string
+	// gapErr, when set, must be part of the error of a gap case, so that the
+	// case cannot pass on some unrelated failure.
+	gapErr string
+	// parseErr, when set, must be part of the error of building the proxy.
+	parseErr string
 	// check replaces the default round trip.
 	check func(t *testing.T, x *xray, proxy C.Proxy, tg targets)
 }
@@ -240,6 +245,12 @@ func trInbound(t *testing.T, protocol, stream string, port int) obj {
 		settings = obj{"clients": []obj{{"password": userUUID}}}
 	case "hysteria":
 		settings = obj{"version": 2, "clients": []obj{{"auth": userUUID}}}
+	case "shadowsocks":
+		settings = obj{"method": "aes-128-gcm", "password": userUUID, "network": "tcp"}
+	case "socks":
+		settings = obj{"auth": "noauth"}
+	case "http":
+		settings = obj{}
 	}
 	var streamSettings obj
 	require.NoError(t, json.Unmarshal([]byte("{"+stream+"}"), &streamSettings), stream)
@@ -331,12 +342,22 @@ func trRun(t *testing.T, cases []trCase) {
 				client = "type: vless\nuuid: %UUID%\n" + client
 			}
 			proxy, err := trParseProxy(trFill(t, client, port, target), port)
+			if c.parseErr != "" {
+				require.ErrorContains(t, err, c.parseErr)
+				return
+			}
 			require.NoError(t, err, "parse proxy")
 			t.Cleanup(func() { _ = proxy.Close() })
 			if c.gap != "" {
 				err = trRoundTrip(proxy, tg, 16, 5*time.Second)
 				require.Error(t, err, "works now, drop the gap mark: %s", c.gap)
+				if c.gapErr != "" {
+					require.ErrorContains(t, err, c.gapErr)
+				}
 				t.Logf("known gap (%s): %v", c.gap, err)
+				if c.serverLog != "" {
+					x.waitCount(t, c.serverLog, 1)
+				}
 				return
 			}
 			if c.check != nil {

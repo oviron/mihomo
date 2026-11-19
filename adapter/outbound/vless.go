@@ -17,7 +17,9 @@ import (
 	"github.com/metacubex/mihomo/component/ech"
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/gun"
+	"github.com/metacubex/mihomo/transport/hystream"
 	"github.com/metacubex/mihomo/transport/jls"
 	"github.com/metacubex/mihomo/transport/restls"
 	"github.com/metacubex/mihomo/transport/shadowtls"
@@ -26,6 +28,7 @@ import (
 	"github.com/metacubex/mihomo/transport/vless/encryption"
 	"github.com/metacubex/mihomo/transport/vless/vision"
 	"github.com/metacubex/mihomo/transport/vmess"
+	"github.com/metacubex/mihomo/transport/xdrive"
 	"github.com/metacubex/mihomo/transport/xhttp"
 
 	"github.com/metacubex/http"
@@ -48,12 +51,18 @@ type Vless struct {
 	gunClient *gun.Client
 	// for xhttp
 	xhttpClient *xhttp.Client
+	// for the hysteria transport
+	hysteriaClient *hystream.Client
+	// for the xdrive transport
+	xdriveClient *xdrive.Client
 
 	echConfig       *ech.Config
 	shadowTLSConfig *shadowtls.Config
 	restlsConfig    *restls.Config
 	jlsConfig       *jls.Config
 	realityConfig   *tlsC.RealityConfig
+
+	reverse *vlessReverse // the bridge of a reverse proxy, see vless_reverse.go
 }
 
 type VlessOption struct {
@@ -82,6 +91,9 @@ type VlessOption struct {
 	GrpcOpts          GrpcOptions       `proxy:"grpc-opts,omitempty"`
 	WSOpts            WSOptions         `proxy:"ws-opts,omitempty"`
 	XHTTPOpts         XHTTPOptions      `proxy:"xhttp-opts,omitempty"`
+	MKCPOpts          MKCPOptions       `proxy:"mkcp-opts,omitempty"`
+	HysteriaOpts      HyStreamOptions   `proxy:"hysteria-opts,omitempty"`
+	XDriveOpts        XDriveOptions     `proxy:"xdrive-opts,omitempty"`
 	WSHeaders         map[string]string `proxy:"ws-headers,omitempty"`
 	SkipCertVerify    bool              `proxy:"skip-cert-verify,omitempty"`
 	NameCertVerify    string            `proxy:"name-cert-verify,omitempty"`
@@ -90,6 +102,8 @@ type VlessOption struct {
 	PrivateKey        string            `proxy:"private-key,omitempty"`
 	ServerName        string            `proxy:"servername,omitempty"`
 	ClientFingerprint string            `proxy:"client-fingerprint,omitempty"`
+
+	Reverse *VlessReverseOption `proxy:"reverse,omitempty"`
 }
 
 type XHTTPOptions struct {
@@ -116,7 +130,9 @@ type XHTTPOptions struct {
 	UplinkChunkSize      string                 `proxy:"uplink-chunk-size,omitempty"`
 	ScMaxEachPostBytes   string                 `proxy:"sc-max-each-post-bytes,omitempty"`
 	ScMinPostsIntervalMs string                 `proxy:"sc-min-posts-interval-ms,omitempty"`
+	PipelinePosts        bool                   `proxy:"pipeline-posts,omitempty"`
 	ReuseSettings        *XHTTPReuseSettings    `proxy:"reuse-settings,omitempty"` // aka XMUX
+	Xmux                 *XHTTPReuseSettings    `proxy:"xmux,omitempty"`           // the same with the semantics of Xray
 	DownloadSettings     *XHTTPDownloadSettings `proxy:"download-settings,omitempty"`
 }
 
@@ -135,6 +151,8 @@ type XHTTPDownloadSettings struct {
 	Host          *string             `proxy:"host,omitempty"`
 	Headers       *map[string]string  `proxy:"headers,omitempty"`
 	ReuseSettings *XHTTPReuseSettings `proxy:"reuse-settings,omitempty"` // aka XMUX
+	Xmux          *XHTTPReuseSettings `proxy:"xmux,omitempty"`
+	XHTTPDownloadXHTTPOptions
 	// proxy part
 	Server            *string           `proxy:"server,omitempty"`
 	Port              *int              `proxy:"port,omitempty"`
@@ -152,6 +170,10 @@ type XHTTPDownloadSettings struct {
 	PrivateKey        *string           `proxy:"private-key,omitempty"`
 	ServerName        *string           `proxy:"servername,omitempty"`
 	ClientFingerprint *string           `proxy:"client-fingerprint,omitempty"`
+
+	// FinalMask is the finalmask of the download server. The masks of the
+	// proxy are those of the upload server and do not apply to it.
+	FinalMask map[string]any `proxy:"finalmask,omitempty"`
 }
 
 func (v *Vless) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.Metadata) (_ net.Conn, err error) {
@@ -257,6 +279,10 @@ func (v *Vless) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.M
 		break // already handle in dialContext
 	case "xhttp":
 		break // already handle in dialContext
+	case "hysteria":
+		break // already handle in dialContext
+	case "xdrive":
+		break // already handle in dialContext
 	default:
 		// default tcp network
 		// handle TLS
@@ -297,7 +323,9 @@ func (v *Vless) streamConnContext(ctx context.Context, c net.Conn, metadata *C.M
 		}
 		conn, err = v.client.StreamConn(c, parseVlessAddr(metadata, v.option.XUDP))
 	} else {
-		conn, err = v.client.StreamConn(c, parseVlessAddr(metadata, false))
+		dst := parseVlessAddr(metadata, false)
+		dst.Reverse = v.option.Reverse != nil && metadata.Type == C.INNER && metadata.Host == vless.ReverseDestination
+		conn, err = v.client.StreamConn(c, dst)
 	}
 	if err != nil {
 		conn = nil
@@ -345,6 +373,12 @@ func (v *Vless) dialContext(ctx context.Context) (c net.Conn, err error) {
 		return v.gunClient.Dial()
 	case "xhttp":
 		return v.xhttpClient.Dial(ctx)
+	case "mkcp", "kcp":
+		return dialMKCP(ctx, v.dialer, v.addr, v.option.MKCPOpts)
+	case "hysteria":
+		return v.hysteriaClient.Dial(ctx)
+	case "xdrive":
+		return v.xdriveClient.Dial(ctx)
 	default:
 	}
 	return v.dialer.DialContext(ctx, "tcp", v.addr)
@@ -425,10 +459,19 @@ func (v *Vless) Close() error {
 			errs = append(errs, err)
 		}
 	}
+	if v.hysteriaClient != nil {
+		_ = v.hysteriaClient.Close()
+	}
+	if v.xdriveClient != nil {
+		_ = v.xdriveClient.Close()
+	}
 	if v.xhttpClient != nil {
 		if err := v.xhttpClient.Close(); err != nil {
 			errs = append(errs, err)
 		}
+	}
+	if v.reverse != nil {
+		v.reverse.close()
 	}
 	return errors.Join(errs...)
 }
@@ -462,6 +505,9 @@ func parseVlessAddr(metadata *C.Metadata, xudp bool) *vless.DstAddr {
 }
 
 func NewVless(option VlessOption) (*Vless, error) {
+	if err := errStreamSettings(&option.BasicOption); err != nil {
+		return nil, err
+	}
 	var addons *vless.Addons
 	if len(option.Flow) >= 16 {
 		option.Flow = option.Flow[:16]
@@ -563,6 +609,11 @@ func NewVless(option VlessOption) (*Vless, error) {
 	if securityMode != "" && !option.TLS {
 		return nil, fmt.Errorf("%s requires TLS", securityMode)
 	}
+	if option.Network == "kcp" || option.Network == "mkcp" {
+		if err := checkMKCP(v.dialer, option.MKCPOpts); err != nil {
+			return nil, err
+		}
+	}
 
 	switch option.Network {
 	case "h2":
@@ -620,6 +671,9 @@ func NewVless(option VlessOption) (*Vless, error) {
 			option.GrpcOpts.MaxStreams,
 		)
 	case "xhttp":
+		if err := finalmask.QuicParamsOf(v.dialer).CheckHTTP3(option.ALPN); err != nil {
+			return nil, err
+		}
 		requestHost := v.option.XHTTPOpts.Host
 		if requestHost == "" {
 			if v.option.ServerName != "" {
@@ -644,6 +698,9 @@ func NewVless(option VlessOption) (*Vless, error) {
 				HMaxReusableSecs: option.XHTTPOpts.ReuseSettings.HMaxReusableSecs,
 			}
 			hKeepAlivePeriod = time.Duration(option.XHTTPOpts.ReuseSettings.HKeepAlivePeriod) * time.Second
+		}
+		if option.XHTTPOpts.Xmux != nil {
+			reuseCfg, hKeepAlivePeriod = option.XHTTPOpts.Xmux.build()
 		}
 
 		cfg := &xhttp.Config{
@@ -670,6 +727,7 @@ func NewVless(option VlessOption) (*Vless, error) {
 			UplinkChunkSize:      v.option.XHTTPOpts.UplinkChunkSize,
 			ScMaxEachPostBytes:   v.option.XHTTPOpts.ScMaxEachPostBytes,
 			ScMinPostsIntervalMs: v.option.XHTTPOpts.ScMinPostsIntervalMs,
+			PipelinePosts:        v.option.XHTTPOpts.PipelinePosts,
 			ReuseConfig:          reuseCfg,
 		}
 
@@ -713,10 +771,13 @@ func NewVless(option VlessOption) (*Vless, error) {
 					if err != nil {
 						return nil, err
 					}
+					quicParams := finalmask.QuicParamsOf(v.dialer) // nil without finalmask.quic-params
+					cfg = quicParams.HTTP3Config(cfg)
 					_, quicConn, err := common.DialQuic(ctx, v.addr, v.DialOptions(), v.dialer, tlsConfig, cfg, common.DialQuicOption{Early: true})
 					if err != nil {
 						return nil, err
 					}
+					quicParams.ApplyCongestion(quicConn, 0)
 					return quicConn, nil
 				},
 				v.option.ALPN,
@@ -729,11 +790,19 @@ func NewVless(option VlessOption) (*Vless, error) {
 			if cfg.Mode == "stream-one" {
 				return nil, fmt.Errorf(`xhttp mode "stream-one" cannot be used with download-settings`)
 			}
+			downloadDialer, err := finalmask.DialerFor(v.dialer, ds.FinalMask)
+			if err != nil {
+				return nil, fmt.Errorf("xhttp download-settings: %w", err)
+			}
 
 			downloadServer := lo.FromPtrOr(ds.Server, v.option.Server)
 			downloadPort := lo.FromPtrOr(ds.Port, v.option.Port)
 			downloadTLS := lo.FromPtrOr(ds.TLS, v.option.TLS)
 			downloadALPN := lo.FromPtrOr(ds.ALPN, v.option.ALPN)
+			downloadQuicParams := finalmask.QuicParamsOf(downloadDialer) // of the download leg's own finalmask
+			if err := downloadQuicParams.CheckHTTP3(downloadALPN); err != nil {
+				return nil, fmt.Errorf("xhttp download-settings: %w", err)
+			}
 			downloadSkipCertVerify := lo.FromPtrOr(ds.SkipCertVerify, v.option.SkipCertVerify)
 			downloadNameCertVerify := lo.FromPtrOr(ds.NameCertVerify, v.option.NameCertVerify)
 			downloadFingerprint := lo.FromPtrOr(ds.Fingerprint, v.option.Fingerprint)
@@ -831,13 +900,17 @@ func NewVless(option VlessOption) (*Vless, error) {
 				}
 				downloadHKeepAlivePeriod = time.Duration(ds.ReuseSettings.HKeepAlivePeriod) * time.Second
 			}
+			if ds.Xmux != nil {
+				downloadCfg.ReuseConfig, downloadHKeepAlivePeriod = ds.Xmux.build()
+			}
+			ds.XHTTPDownloadXHTTPOptions.apply(&downloadCfg)
 
 			cfg.DownloadConfig = &downloadCfg
 
 			makeDownloadTransport = func() http.RoundTripper {
 				return xhttp.NewTransport(
 					func(ctx context.Context) (net.Conn, error) {
-						return v.dialer.DialContext(ctx, "tcp", downloadAddr)
+						return downloadDialer.DialContext(ctx, "tcp", downloadAddr) // the masks of the proxy are for the upload server
 					},
 					func(ctx context.Context, conn net.Conn, isH2 bool) (net.Conn, error) {
 						if downloadTLS {
@@ -904,10 +977,11 @@ func NewVless(option VlessOption) (*Vless, error) {
 						if err != nil {
 							return nil, err
 						}
-						_, quicConn, err := common.DialQuic(ctx, downloadAddr, v.DialOptions(), v.dialer, tlsConfig, cfg, common.DialQuicOption{Early: true})
+						_, quicConn, err := common.DialQuic(ctx, downloadAddr, v.DialOptions(), downloadDialer, tlsConfig, downloadQuicParams.HTTP3Config(cfg), common.DialQuicOption{Early: true})
 						if err != nil {
 							return nil, err
 						}
+						downloadQuicParams.ApplyCongestion(quicConn, 0)
 						return quicConn, nil
 					},
 					downloadALPN,
@@ -918,6 +992,38 @@ func NewVless(option VlessOption) (*Vless, error) {
 
 		v.xhttpClient, err = xhttp.NewClient(cfg, makeTransport, makeDownloadTransport, v.realityConfig != nil)
 		if err != nil {
+			return nil, err
+		}
+	case "xdrive":
+		v.xdriveClient, err = newXDriveClient(&option, xdriveHTTPClient(v.dialer, v.option, v.echConfig))
+		if err != nil {
+			return nil, err
+		}
+	case "hysteria":
+		v.hysteriaClient, err = newHysteriaTransport(hysteriaTransport{
+			Base: v.Base, Basic: &v.option.BasicOption, Dialer: v.dialer, Server: option.Server, Port: option.Port,
+			TLS: option.TLS, ALPN: option.ALPN, Options: &v.option.HysteriaOpts,
+			TLSConfig: vmess.TLSConfig{
+				Host:           option.ServerName,
+				SkipCertVerify: option.SkipCertVerify,
+				NameCertVerify: option.NameCertVerify,
+				FingerPrint:    option.Fingerprint,
+				Certificate:    option.Certificate,
+				PrivateKey:     option.PrivateKey,
+				ECH:            v.echConfig,
+				ShadowTLS:      v.shadowTLSConfig,
+				Restls:         v.restlsConfig,
+				JLS:            v.jlsConfig,
+				Reality:        v.realityConfig,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if option.Reverse != nil {
+		if v.reverse, err = newVlessReverse(v, *option.Reverse, option.NewTunnel()); err != nil {
 			return nil, err
 		}
 	}

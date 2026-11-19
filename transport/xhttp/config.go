@@ -55,6 +55,7 @@ type Config struct {
 	ScMaxBufferedPosts   string // server only
 	ScMaxEachPostBytes   string
 	ScMinPostsIntervalMs string
+	PipelinePosts        bool // client only, see pipeline.go
 	ReuseConfig          *ReuseConfig
 	DownloadConfig       *Config
 }
@@ -65,6 +66,11 @@ type ReuseConfig struct {
 	CMaxReuseTimes   string
 	HMaxRequestTimes string
 	HMaxReusableSecs string
+
+	// XraySemantics reads the settings the way Xray-core reads xmux, see xmux.go.
+	XraySemantics bool
+	// HKeepAlivePeriod is only looked at to tell an empty xmux block.
+	HKeepAlivePeriod int
 }
 
 func (c *Config) NormalizedMode() string {

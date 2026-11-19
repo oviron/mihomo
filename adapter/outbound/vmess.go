@@ -17,13 +17,16 @@ import (
 	tlsC "github.com/metacubex/mihomo/component/tls"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/ntp"
+	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/gun"
+	"github.com/metacubex/mihomo/transport/hystream"
 	"github.com/metacubex/mihomo/transport/jls"
 	"github.com/metacubex/mihomo/transport/mekya"
 	"github.com/metacubex/mihomo/transport/mkcp"
 	"github.com/metacubex/mihomo/transport/restls"
 	"github.com/metacubex/mihomo/transport/shadowtls"
 	mihomoVMess "github.com/metacubex/mihomo/transport/vmess"
+	"github.com/metacubex/mihomo/transport/xhttp"
 
 	"github.com/metacubex/http"
 	vmess "github.com/metacubex/sing-vmess"
@@ -42,6 +45,9 @@ type Vmess struct {
 	// for gun mux
 	gunClient   *gun.Client
 	mekyaClient *mekya.Client
+	xhttpClient *xhttp.Client
+	// for the hysteria transport
+	hysteriaClient *hystream.Client
 
 	echConfig       *ech.Config
 	shadowTLSConfig *shadowtls.Config
@@ -76,6 +82,8 @@ type VmessOption struct {
 	TLSMirrorOpts       TLSMirrorOptions `proxy:"tlsmirror-opts,omitempty"`
 	MekyaOpts           MekyaOptions     `proxy:"mekya-opts,omitempty"`
 	MKCPOpts            MKCPOptions      `proxy:"mkcp-opts,omitempty"`
+	XHTTPOpts           XHTTPOptions     `proxy:"xhttp-opts,omitempty"`
+	HysteriaOpts        HyStreamOptions  `proxy:"hysteria-opts,omitempty"`
 	HTTPOpts            HTTPOptions      `proxy:"http-opts,omitempty"`
 	HTTP2Opts           HTTP2Options     `proxy:"h2-opts,omitempty"`
 	GrpcOpts            GrpcOptions      `proxy:"grpc-opts,omitempty"`
@@ -98,6 +106,7 @@ type MKCPOptions struct {
 	ReadBuffer       uint32 `proxy:"read-buffer,omitempty"`
 	Seed             string `proxy:"seed,omitempty"`
 	Header           string `proxy:"header,omitempty"`
+	Raw              bool   `proxy:"raw,omitempty"` // bare mKCP as in Xray-core 26.x, obfuscation is left to finalmask
 }
 
 func (o MKCPOptions) Build() mkcp.Config {
@@ -111,6 +120,7 @@ func (o MKCPOptions) Build() mkcp.Config {
 		ReadBuffer:       o.ReadBuffer,
 		Seed:             o.Seed,
 		Header:           o.Header,
+		Raw:              o.Raw,
 	}
 }
 
@@ -276,6 +286,10 @@ func (v *Vmess) StreamConnContext(ctx context.Context, c net.Conn, metadata *C.M
 		break // already handle in dialContext
 	case "mekya":
 		break // already handle in dialContext
+	case "xhttp":
+		break // already handle in dialContext
+	case "hysteria":
+		break // already handle in dialContext
 	default:
 		// default tcp network
 		// handle TLS
@@ -386,6 +400,10 @@ func (v *Vmess) dialContext(ctx context.Context) (c net.Conn, err error) {
 		return v.gunClient.Dial()
 	case "mekya":
 		return v.mekyaClient.Dial(ctx)
+	case "xhttp":
+		return v.xhttpClient.Dial(ctx)
+	case "hysteria":
+		return v.hysteriaClient.Dial(ctx)
 	case "mkcp", "kcp":
 		var raw net.Conn
 		raw, err = v.dialer.DialContext(ctx, "udp", v.addr)
@@ -465,6 +483,14 @@ func (v *Vmess) Close() error {
 			errs = append(errs, err)
 		}
 	}
+	if v.hysteriaClient != nil {
+		_ = v.hysteriaClient.Close()
+	}
+	if v.xhttpClient != nil {
+		if err := v.xhttpClient.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	return errors.Join(errs...)
 }
 
@@ -474,6 +500,9 @@ func (v *Vmess) SupportUOT() bool {
 }
 
 func NewVmess(option VmessOption) (*Vmess, error) {
+	if err := errStreamSettings(&option.BasicOption); err != nil {
+		return nil, err
+	}
 	security := strings.ToLower(option.Cipher)
 	var options []vmess.ClientOption
 	if option.GlobalPadding {
@@ -568,6 +597,9 @@ func NewVmess(option VmessOption) (*Vmess, error) {
 		case "ShadowTLS", "Restls", "JLS":
 			return nil, fmt.Errorf("%s only supports TCP transports", securityMode)
 		}
+		if err := finalmask.CheckMKCP(v.dialer, option.MKCPOpts.Raw, option.MKCPOpts.Seed != "" || option.MKCPOpts.Header != ""); err != nil {
+			return nil, err
+		}
 	}
 
 	switch option.Network {
@@ -650,6 +682,51 @@ func NewVmess(option VmessOption) (*Vmess, error) {
 			option.GrpcOpts.MinStreams,
 			option.GrpcOpts.MaxStreams,
 		)
+	case "hysteria":
+		v.hysteriaClient, err = newHysteriaTransport(hysteriaTransport{
+			Base: v.Base, Basic: &v.option.BasicOption, Dialer: v.dialer, Server: option.Server, Port: option.Port,
+			TLS: option.TLS, ALPN: option.ALPN, Options: &v.option.HysteriaOpts,
+			TLSConfig: mihomoVMess.TLSConfig{
+				Host:           option.ServerName,
+				SkipCertVerify: option.SkipCertVerify,
+				NameCertVerify: option.NameCertVerify,
+				FingerPrint:    option.Fingerprint,
+				Certificate:    option.Certificate,
+				PrivateKey:     option.PrivateKey,
+				ECH:            v.echConfig,
+				ShadowTLS:      v.shadowTLSConfig,
+				Restls:         v.restlsConfig,
+				JLS:            v.jlsConfig,
+				Reality:        v.realityConfig,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
+	case "xhttp":
+		v.xhttpClient, err = newXHTTPClient(xhttpTransport{
+			DialOptions: v.option.BasicOption.quicDialOptions(v.Base), Dialer: v.dialer, Server: option.Server, Port: option.Port,
+			TLS: option.TLS, ALPN: option.ALPN, Options: &v.option.XHTTPOpts,
+			TLSConfig: mihomoVMess.TLSConfig{
+				Host:              option.ServerName,
+				SkipCertVerify:    option.SkipCertVerify,
+				NameCertVerify:    option.NameCertVerify,
+				FingerPrint:       option.Fingerprint,
+				Certificate:       option.Certificate,
+				PrivateKey:        option.PrivateKey,
+				ClientFingerprint: option.ClientFingerprint,
+				ECH:               v.echConfig,
+				ShadowTLS:         v.shadowTLSConfig,
+				Restls:            v.restlsConfig,
+				JLS:               v.jlsConfig,
+				Reality:           v.realityConfig,
+				TLSMirror:         option.TLSMirrorOpts.Build(),
+				TLSMirrorDialer:   proxydialer.New(v, false).DialContext,
+			},
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return v, nil

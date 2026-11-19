@@ -6,6 +6,7 @@ import (
 	"github.com/metacubex/mihomo/adapter/outbound"
 	"github.com/metacubex/mihomo/common/structure"
 	C "github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/transport/finalmask"
 )
 
 func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error) {
@@ -13,6 +14,10 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 	proxyType, existType := mapping["type"].(string)
 	if !existType {
 		return nil, fmt.Errorf("missing type")
+	}
+
+	if err := finalmask.ValidateProxy(mapping); err != nil {
+		return nil, err
 	}
 
 	opt := applyProxyOptions(options...)
@@ -240,6 +245,27 @@ func ParseProxy(mapping map[string]any, options ...ProxyOption) (C.Proxy, error)
 		if muxOption.Enabled {
 			proxy, err = outbound.NewSingMux(*muxOption, proxy)
 			if err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if muxMapping, muxExist := mapping["mux"].(map[string]any); muxExist {
+		muxOption := &outbound.MuxCoolOption{}
+		err = decoder.Decode(muxMapping, muxOption)
+		if err != nil {
+			_ = proxy.Close()
+			return nil, err
+		}
+		if muxOption.Enabled {
+			if _, isSingMux := proxy.(*outbound.SingMux); isSingMux {
+				_ = proxy.Close()
+				return nil, fmt.Errorf("mux and smux cannot be used together")
+			}
+			inner := proxy
+			proxy, err = outbound.NewMuxCool(*muxOption, inner)
+			if err != nil {
+				_ = inner.Close()
 				return nil, err
 			}
 		}

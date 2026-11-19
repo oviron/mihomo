@@ -293,6 +293,14 @@ func NewClient(cfg *Config, makeTransport TransportMaker, makeDownloadTransport 
 			client.makeDownloadTransport = client.downloadManager.GetTransport
 		}
 	}
+	if client.downloadManager == nil && makeDownloadTransport != nil && cfg.DownloadConfig != nil && cfg.DownloadConfig.ReuseConfig != nil {
+		// the download leg may be pooled on its own
+		client.downloadManager, err = NewReuseManager(cfg.DownloadConfig.ReuseConfig, makeDownloadTransport)
+		if err != nil {
+			return nil, err
+		}
+		client.makeDownloadTransport = client.downloadManager.GetTransport
+	}
 	return client, nil
 }
 
@@ -611,6 +619,11 @@ func (c *Client) DialPacketUp(ctx context.Context) (net.Conn, error) {
 	}
 	writer.writeCond = sync.Cond{L: &writer.writeMu}
 	conn := &Conn{writer: writer}
+	if c.cfg.PipelinePosts {
+		pipelined := newPipelinedWriter(writer)
+		pipelined.onFail = func() { _ = conn.reader.Close() } // set below, before any Write
+		conn.writer = pipelined
+	}
 
 	// Async download: avoid blocking on CDN response header buffering
 	gotConn := make(chan bool, 1)

@@ -3,6 +3,8 @@ package xraytest
 import (
 	"strings"
 	"testing"
+
+	tlsC "github.com/metacubex/mihomo/component/tls"
 )
 
 func trRawServer(security string) string {
@@ -43,12 +45,14 @@ func TestTransportREALITY(t *testing.T) {
 			stream: trRawServer(withOpt(`,"minClientVer":"26.3.27"`)),
 			client: trRealityClient,
 			gap:    "by design: the reported version stays 1.8.2 unless client-version is set",
+			gapErr: "x509: certificate signed by unknown authority",
 		},
 		{
 			name:   "max-client-ver",
 			stream: trRawServer(withOpt(`,"maxClientVer":"25.12.31"`)),
 			client: trRealityClient + "  client-version: 26.11.9\n",
 			gap:    "not a gap: the server refuses a newer client",
+			gapErr: "x509: certificate signed by unknown authority", // the fallback site answered
 		},
 		{
 			name:   "client-version-zero",
@@ -80,6 +84,38 @@ func TestTransportREALITY(t *testing.T) {
 			client: fingerprint(name),
 			gap:    "this ClientHello has no X25519MLKEM768 key share",
 		})
+	}
+	if tlsC.MLDSA65Supported {
+		otherVerify := trField(t, trXrayTool(t, "mldsa65"), "Verify")
+		cases = append(cases,
+			trCase{
+				name:      "mldsa65-verify",
+				stream:    trRawServer(withOpt(`,"mldsa65Seed":"%SEED%"`)),
+				client:    trRealityClient + "  mldsa65-verify: %VERIFY%\n",
+				serverLog: "is using ML-DSA-65 for cert's extra signature: true",
+			},
+			trCase{
+				name:   "mldsa65-verify-xhttp",
+				stream: trXHTTPServer(withOpt(`,"mldsa65Seed":"%SEED%"`), ""),
+				client: trRealityClient + "  mldsa65-verify: %VERIFY%\nnetwork: xhttp\nxhttp-opts: {path: /xh}\n",
+			},
+			trCase{
+				name:   "mldsa65-verify-foreign-key",
+				stream: trRawServer(withOpt(`,"mldsa65Seed":"%SEED%"`)),
+				client: trRealityClient + "  mldsa65-verify: " + otherVerify + "\n",
+				gap:    "not a gap: the signature is made with another key",
+				gapErr: "x509: certificate",
+			},
+			trCase{
+				name:   "mldsa65-verify-unsigned-server",
+				stream: trRawServer(trRealityServer),
+				client: trRealityClient + "  mldsa65-verify: %VERIFY%\n",
+				gap:    "not a gap: the server has no mldsa65Seed",
+				gapErr: "x509: certificate",
+			},
+		)
+	} else {
+		t.Log("built with Go older than 1.27: mldsa65-verify is not checked")
 	}
 	// the vision case needs the flow on the server user
 	for i := range cases {
@@ -147,6 +183,23 @@ func TestTransportTLS(t *testing.T) {
 			client: "tls: true\nservername: example.org\nfingerprint: %PIN%\n",
 		},
 		{
+			name:   "pinned-certificate-list",
+			stream: trRawServer(trTLSServer),
+			client: "tls: true\nservername: example.org\nfingerprint: \"0000000000000000000000000000000000000000000000000000000000000000, %PIN%\"\n",
+		},
+		{
+			name:   "pinned-certificate-list-utls",
+			stream: trRawServer(trTLSServer),
+			client: "tls: true\nservername: example.org\nclient-fingerprint: chrome\nfingerprint: \"0000000000000000000000000000000000000000000000000000000000000000,%PIN%\"\n",
+		},
+		{
+			name:   "pinned-certificate-list-without-the-certificate",
+			stream: trRawServer(trTLSServer),
+			client: "tls: true\nservername: example.org\nfingerprint: \"0000000000000000000000000000000000000000000000000000000000000000,1111111111111111111111111111111111111111111111111111111111111111\"\n",
+			gap:    "not a gap: no pin of the list matches",
+			gapErr: "certificate fingerprints do not match",
+		},
+		{
 			name:   "ech-go-tls",
 			stream: trRawServer(ech),
 			client: trTLSClient + "ech-opts: {enable: true, config: %ECHLIST%}\n",
@@ -161,6 +214,7 @@ func TestTransportTLS(t *testing.T) {
 			stream: trRawServer(ech),
 			client: trTLSClient + "ech-opts: {enable: true, config: " + otherECH + "}\n",
 			gap:    "not a gap: proves the client really sends ECH",
+			gapErr: "failed to verify certificate",
 		},
 		{
 			name:   "session-resumption-server",

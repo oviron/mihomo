@@ -63,3 +63,32 @@ func TestXrayDefaults(t *testing.T) {
 	c.applyXrayDefaults()
 	assert.Equal(t, "", c.UplinkDataKey)
 }
+
+// The download leg is built from its own options.
+func TestDownloadRequestOptions(t *testing.T) {
+	uploads := recordingTransport{requests: make(chan *http.Request, 4)}
+	downloads := recordingTransport{requests: make(chan *http.Request, 4)}
+	client, err := NewClient(&Config{
+		Host: "up.example.org", Path: "/up", Mode: "stream-up",
+		XPaddingObfsMode: true, XPaddingPlacement: PlacementQuery, XPaddingKey: "up",
+		DownloadConfig: &Config{
+			Host: "down.example.org", Path: "/down",
+			XPaddingObfsMode: true, XPaddingPlacement: PlacementCookie, XPaddingKey: "down",
+			SessionPlacement: PlacementQuery, SessionKey: "s",
+		},
+	}, func() http.RoundTripper { return uploads }, func() http.RoundTripper { return downloads }, false)
+	require.NoError(t, err)
+	defer client.Close()
+	_, err = client.Dial(context.Background())
+	require.Error(t, err)
+
+	req := <-downloads.requests
+	assert.Equal(t, http.MethodGet, req.Method)
+	assert.Equal(t, "down.example.org", req.URL.Host)
+	assert.Equal(t, "/down/", req.URL.Path) // the sequence number of a POST would follow
+	assert.NotEmpty(t, req.URL.Query().Get("s"))
+	cookie, err := req.Cookie("down")
+	require.NoError(t, err)
+	assert.NotEmpty(t, cookie.Value)
+	assert.Empty(t, req.URL.Query().Get("up"))
+}

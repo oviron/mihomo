@@ -139,9 +139,9 @@ func TestVlessVision(t *testing.T) {
 			"type": "vless", "port": port, "uuid": userUUID, "udp": true, "flow": flow,
 			"tls": true, "skip-cert-verify": true, "servername": "example.org",
 		})
-		checkTCP(t, proxy, tg)
 		checkTLS(t, proxy, tg)
-		checkVisionDirect(t, x)
+		checkVisionDirect(t, x) // before the bulk transfer: Xray drops debug log lines under load
+		checkTCP(t, proxy, tg)
 		checkUDP(t, proxy, tg)
 		checkUDPFullCone(t, proxy, tg)
 		checkXUDPGlobalID(t, x, proxy, tg)
@@ -158,9 +158,9 @@ func TestVlessVision(t *testing.T) {
 			"type": "vless", "port": port, "uuid": userUUID, "udp": true, "flow": flow,
 			"tls": true, "skip-cert-verify": true, "servername": "example.org",
 		})
-		checkTCP(t, proxy, tg)
 		checkTLS(t, proxy, tg)
-		checkVisionDirect(t, x)
+		checkVisionDirect(t, x) // before the bulk transfer: Xray drops debug log lines under load
+		checkTCP(t, proxy, tg)
 		checkUDP(t, proxy, tg)
 		// the server pads short blocks to 2000-3500 bytes, far above the default 900-1400
 		longest := 0
@@ -184,9 +184,9 @@ func TestVlessVision(t *testing.T) {
 				"type": "vless", "port": port, "uuid": userUUID, "udp": true, "flow": flow,
 				"encryption": encryption,
 			})
-			checkTCP(t, proxy, tg)
 			checkTLS(t, proxy, tg)
 			checkVisionDirect(t, x)
+			checkTCP(t, proxy, tg)
 			checkUDP(t, proxy, tg)
 			checkUDPFullCone(t, proxy, tg)
 		})

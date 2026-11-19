@@ -22,6 +22,7 @@ import (
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/log"
+	"github.com/metacubex/mihomo/transport/finalmask"
 	"github.com/metacubex/mihomo/transport/masque"
 	"github.com/metacubex/mihomo/transport/tuic/common"
 
@@ -48,6 +49,8 @@ type Masque struct {
 	runDevice atomic.Bool
 
 	option MasqueOption
+
+	standard *masqueStandard // nil for WARP
 }
 
 type MasqueOption struct {
@@ -55,8 +58,8 @@ type MasqueOption struct {
 	Name             string `proxy:"name"`
 	Server           string `proxy:"server"`
 	Port             int    `proxy:"port"`
-	PrivateKey       string `proxy:"private-key"`
-	PublicKey        string `proxy:"public-key"`
+	PrivateKey       string `proxy:"private-key,omitempty"`
+	PublicKey        string `proxy:"public-key,omitempty"`
 	Ip               string `proxy:"ip,omitempty"`
 	Ipv6             string `proxy:"ipv6,omitempty"`
 	URI              string `proxy:"uri,omitempty"`
@@ -76,6 +79,17 @@ type MasqueOption struct {
 
 	RemoteDnsResolve bool     `proxy:"remote-dns-resolve,omitempty"`
 	Dns              []string `proxy:"dns,omitempty"`
+
+	// without private-key: a standard CONNECT-IP server, see masque_std.go
+	User    string            `proxy:"user,omitempty"`
+	Pass    string            `proxy:"pass,omitempty"`
+	Host    string            `proxy:"host,omitempty"`
+	Path    string            `proxy:"path,omitempty"`
+	Headers map[string]string `proxy:"headers,omitempty"`
+
+	ClientFingerprint string     `proxy:"client-fingerprint,omitempty"` // for network: h2
+	Fingerprint       string     `proxy:"fingerprint,omitempty"`
+	ECHOpts           ECHOptions `proxy:"ech-opts,omitempty"`
 }
 
 func (option MasqueOption) Prefixes() ([]netip.Prefix, error) {
@@ -132,6 +146,13 @@ func NewMasque(option MasqueOption) (*Masque, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	outbound.runCtx = ctx
 	outbound.runCancel = cancel
+
+	if option.PrivateKey == "" && option.PublicKey == "" {
+		if err := outbound.initStandard(option); err != nil {
+			return nil, err
+		}
+		return outbound, nil
+	}
 
 	privKeyB64, err := base64.StdEncoding.DecodeString(option.PrivateKey)
 	if err != nil {
@@ -268,11 +289,13 @@ func NewMasque(option MasqueOption) (*Masque, error) {
 
 func (w *Masque) dialQuic(ctx context.Context) (net.PacketConn, *quic.Conn, error) {
 	// without ConnectionIDLength set, backend occasionally throws PROTOCOL_VIOLATION and that closes our connection
-	pc, quicConn, err := common.DialQuic(ctx, w.addr, w.DialOptions(), w.dialer, w.tlsConfig, w.quicConfig, common.DialQuicOption{ConnectionIDLength: 20})
+	quicParams := finalmask.QuicParamsOf(w.dialer) // nil without finalmask.quic-params
+	pc, quicConn, err := common.DialQuic(ctx, w.addr, w.DialOptions(), w.dialer, w.tlsConfig, quicParams.HTTP3Config(w.quicConfig), common.DialQuicOption{ConnectionIDLength: 20})
 	if err != nil {
 		return nil, nil, err
 	}
 	common.SetCongestionController(quicConn, w.option.CongestionController, w.option.CWND, w.option.BBRProfile)
+	quicParams.ApplyCongestion(quicConn, w.option.CWND)
 	return pc, quicConn, nil
 }
 
@@ -331,6 +354,9 @@ func (w *Masque) run(ctx context.Context) error {
 }
 
 func (w *Masque) startLocked(ctx context.Context) error {
+	if w.standard != nil {
+		return w.startStandard(ctx)
+	}
 	if !w.runDevice.Load() {
 		err := w.tunDevice.Start()
 		if err != nil {

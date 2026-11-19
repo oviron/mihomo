@@ -1,6 +1,20 @@
 package xraytest
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/netip"
+	"testing"
+	"time"
+
+	"github.com/metacubex/mihomo/adapter"
+	"github.com/metacubex/mihomo/component/resolver"
+	C "github.com/metacubex/mihomo/constant"
+
+	"github.com/miekg/dns"
+	"github.com/stretchr/testify/require"
+)
 
 func TestTransportGRPC(t *testing.T) {
 	grpc := func(settings, security string) string {
@@ -21,6 +35,11 @@ func TestTransportGRPC(t *testing.T) {
 			name:   "multi-mode-server",
 			stream: grpc(`"serviceName":"gun","multiMode":true`, trTLSServer),
 			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: gun}\n",
+		},
+		{
+			name:   "default-service-name-of-xray",
+			stream: grpc(`"multiMode":false`, trTLSServer),
+			client: trTLSClient + "network: grpc\ngrpc-opts: {grpc-service-name: \"//Tun\"}\n",
 		},
 		{
 			name:   "custom-path",
@@ -79,6 +98,11 @@ func TestTransportWebSocket(t *testing.T) {
 			client: trTLSClient + "network: ws\nws-opts: {path: /ws}\n",
 		},
 		{
+			name:   "browser-headers",
+			stream: `"network":"ws","wsSettings":{"path":"/ws"},` + trTLSServer,
+			client: trTLSClient + "network: ws\nws-opts: {path: /ws, headers: {User-Agent: chrome}}\n",
+		},
+		{
 			name:   "utls-chrome",
 			stream: `"network":"ws","wsSettings":{"path":"/ws"},` + trTLSServer,
 			client: trTLSClient + "client-fingerprint: chrome\nnetwork: ws\nws-opts: {path: /ws}\n",
@@ -114,6 +138,16 @@ func TestTransportRAW(t *testing.T) {
 			client: "",
 		},
 		{
+			name:   "sockopt",
+			stream: `"network":"raw",` + trTLSServer,
+			client: trTLSClient + "sockopt: {tcp-user-timeout: 10000, tcp-max-seg: 1200, tcp-window-clamp: 65535, tcp-congestion: reno, tcp-keep-alive-idle: 30, tcp-keep-alive-interval: 10}\n",
+		},
+		{
+			name:   "sockopt-xhttp",
+			stream: trXHTTPServer(trTLSServer, ""),
+			client: trTLSClient + "network: xhttp\nxhttp-opts: {path: /xh}\nsockopt: {tcp-user-timeout: 10000, tcp-max-seg: 1200}\n",
+		},
+		{
 			name:   "http-header",
 			stream: `"network":"raw","rawSettings":{"header":{"type":"http","request":{"path":["/a","/b"],"headers":{"Host":["a.example.org"]}}}}`,
 			client: "network: http\nhttp-opts: {method: GET, path: [/a], headers: {Host: [a.example.org]}}\n",
@@ -136,10 +170,53 @@ func TestTransportMKCP(t *testing.T) {
 	trRun(t, []trCase{
 		{
 			name:     "vmess-no-mask",
-			gap:      "mihomo always applies the legacy mKCP packet authenticator, Xray 26 has it as the mkcp-legacy mask only",
+			gap:      "without mkcp-opts.raw mihomo applies the legacy mKCP packet authenticator, which Xray 26 has as the mkcp-legacy mask only",
 			protocol: "vmess",
 			stream:   `"network":"kcp","kcpSettings":{}`,
 			client:   vmess + "network: kcp\n",
+		},
+		{
+			// bare mKCP, as an Xray 26 inbound without masks speaks it
+			name:     "vmess-raw",
+			protocol: "vmess",
+			stream:   `"network":"kcp","kcpSettings":{}`,
+			client:   vmess + "network: kcp\nmkcp-opts: {raw: true}\n",
+		},
+		{
+			name:   "vless-raw",
+			stream: `"network":"kcp","kcpSettings":{}`,
+			client: "network: kcp\nmkcp-opts: {raw: true}\n",
+		},
+		{
+			name:     "trojan-raw",
+			protocol: "trojan",
+			stream:   `"network":"kcp","kcpSettings":{}`,
+			client:   "type: trojan\npassword: %UUID%\ntls: false\nnetwork: kcp\nmkcp-opts: {raw: true}\n",
+		},
+		{
+			// the mask of finalmask over bare mKCP: the same bytes as the built-in obfuscation
+			name:   "vless-raw-mkcp-legacy-mask",
+			stream: `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy","settings":{"value":"secret"}}]}`,
+			client: "type: vless\nuuid: %UUID%\nnetwork: kcp\nmkcp-opts: {raw: true}\nfinalmask: {udp: [{type: mkcp-legacy, settings: {value: secret}}]}\n",
+		},
+		{
+			name:     "vless-mkcp-legacy-mask-without-raw",
+			stream:   `"network":"kcp","kcpSettings":{}`,
+			client:   "type: vless\nuuid: %UUID%\nnetwork: kcp\nfinalmask: {udp: [{type: mkcp-legacy}]}\n",
+			parseErr: "raw",
+		},
+		{
+			name:     "trojan-raw-with-seed",
+			protocol: "trojan",
+			stream:   `"network":"kcp","kcpSettings":{}`,
+			client:   "type: trojan\npassword: %UUID%\ntls: false\nnetwork: kcp\nmkcp-opts: {raw: true, seed: secret}\n",
+			parseErr: "raw",
+		},
+		{
+			name:     "shadowsocks-stream-settings-raw",
+			protocol: "shadowsocks",
+			stream:   `"network":"kcp","kcpSettings":{}`,
+			client:   "type: ss\ncipher: aes-128-gcm\npassword: %UUID%\nstream-settings: {network: kcp, mkcp-opts: {raw: true}}\n",
 		},
 		{
 			name:     "vmess-legacy-mask",
@@ -161,9 +238,31 @@ func TestTransportMKCP(t *testing.T) {
 		},
 		{
 			name:   "vless",
-			gap:    "no kcp network for vless",
 			stream: `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]}`,
 			client: "network: kcp\n",
+		},
+		{
+			name:   "vless-seed-tuned",
+			stream: `"network":"kcp","kcpSettings":{"mtu":1200,"tti":20},"finalmask":{"udp":[{"type":"mkcp-legacy","settings":{"value":"secret"}}]}`,
+			client: "network: kcp\nmkcp-opts: {seed: secret, mtu: 1200, tti: 20}\n",
+		},
+		{
+			name:   "vless-tls",
+			stream: `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]},` + trTLSServer,
+			client: trTLSClient + "network: kcp\n",
+		},
+		{
+			name:   "vless-tti-out-of-range",
+			stream: `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]}`,
+			client: "network: kcp\nmkcp-opts: {tti: 1001}\n",
+			// Xray-core refuses such a tti too
+			parseErr: "tti must be between",
+		},
+		{
+			name:     "trojan-tls",
+			protocol: "trojan",
+			stream:   `"network":"kcp","kcpSettings":{},"finalmask":{"udp":[{"type":"mkcp-legacy"}]},` + trTLSServer,
+			client:   "type: trojan\npassword: %UUID%\nsni: example.org\nskip-cert-verify: true\nnetwork: kcp\n",
 		},
 	})
 }
@@ -180,8 +279,105 @@ func TestTransportHysteria(t *testing.T) {
 		{
 			name:   "vless-over-hysteria",
 			stream: `"network":"hysteria","hysteriaSettings":{"version":2,"auth":"%UUID%"},` + h3,
-			client: trTLSClient + "network: hysteria\n",
-			gap:    "no hysteria network for vless",
+			client: trTLSClient + "network: hysteria\nhysteria-opts: {version: 2, auth: %UUID%}\nudp: true\n",
+			check: func(t *testing.T, x *xray, proxy C.Proxy, tg targets) {
+				trCheck(t, proxy, tg)
+				checkUDP(t, proxy, tg) // inside the stream, the transport itself carries no UDP here
+				// several streams share the one connection
+				errs := make(chan error, 8)
+				for i := 0; i < cap(errs); i++ {
+					go func() { errs <- trRoundTrip(proxy, tg, 256<<10, 30*time.Second) }()
+				}
+				for i := 0; i < cap(errs); i++ {
+					require.NoError(t, <-errs)
+				}
+			},
+		},
+		{
+			name:     "trojan-over-hysteria",
+			protocol: "trojan",
+			stream:   `"network":"hysteria","hysteriaSettings":{"version":2,"auth":"%UUID%"},` + h3,
+			client:   "type: trojan\npassword: %UUID%\nsni: example.org\nskip-cert-verify: true\nnetwork: hysteria\nhysteria-opts: {auth: %UUID%}\n",
+		},
+		{
+			name:   "vless-over-hysteria-pinned",
+			stream: `"network":"hysteria","hysteriaSettings":{"version":2,"auth":"%UUID%"},` + h3,
+			client: "tls: true\nservername: example.org\nfingerprint: %PIN%\nnetwork: hysteria\nhysteria-opts: {auth: %UUID%}\n",
+		},
+		{
+			name:   "vless-over-hysteria-wrong-auth",
+			stream: `"network":"hysteria","hysteriaSettings":{"version":2,"auth":"%UUID%"},` + h3,
+			client: trTLSClient + "network: hysteria\nhysteria-opts: {auth: not-the-auth}\n",
+			gap:    "not a gap: the server refuses the auth",
+			gapErr: "auth failed",
 		},
 	})
+}
+
+// trZone is a resolver of the proxy servers with a few records of its own:
+// what a DNS zone of the server operator would hold.
+type trZone struct {
+	records []string
+}
+
+func (z *trZone) ExchangeContext(ctx context.Context, m *dns.Msg) (*dns.Msg, error) {
+	reply := new(dns.Msg)
+	reply.SetReply(m)
+	for _, record := range z.records {
+		rr, err := dns.NewRR(record)
+		if err != nil {
+			return nil, err
+		}
+		if rr.Header().Name == m.Question[0].Name && rr.Header().Rrtype == m.Question[0].Qtype {
+			reply.Answer = append(reply.Answer, rr)
+		}
+	}
+	return reply, nil
+}
+
+func (z *trZone) LookupIP(ctx context.Context, host string) ([]netip.Addr, error) {
+	return []netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil
+}
+func (z *trZone) LookupIPv4(ctx context.Context, host string) ([]netip.Addr, error) {
+	return z.LookupIP(ctx, host)
+}
+func (z *trZone) LookupIPv6(ctx context.Context, host string) ([]netip.Addr, error) {
+	return nil, errors.New("no IPv6")
+}
+func (z *trZone) ResolveECH(ctx context.Context, host string) ([]byte, error) {
+	return nil, errors.New("no ECH")
+}
+func (z *trZone) Invalid() bool    { return true }
+func (z *trZone) ClearCache()      {}
+func (z *trZone) ResetConnection() {}
+
+// The server is found through a SRV or a TXT record of its name, so its
+// address and port can be moved by changing the record.
+func TestTransportAddressPortStrategy(t *testing.T) {
+	tg := startTargets(t)
+	port := freePort(t)
+	trStartXray(t, trInbound(t, "vless", trFill(t, trXHTTPServer(trTLSServer, ""), port, 0), port))
+
+	old := resolver.ProxyServerHostResolver
+	resolver.ProxyServerHostResolver = &trZone{records: []string{
+		fmt.Sprintf(`_xray._tcp.example.org. 60 IN SRV 0 0 %d entry.example.org.`, port),
+		fmt.Sprintf(`moved.example.org. 60 IN TXT "127.0.0.1:%d"`, port),
+	}}
+	defer func() { resolver.ProxyServerHostResolver = old }()
+
+	for server, strategy := range map[string]string{
+		"_xray._tcp.example.org": "SrvPortAndAddress",
+		"moved.example.org":      "txtportandaddress",
+	} {
+		proxy, err := adapter.ParseProxy(map[string]any{
+			"name": "xray", "type": "vless", "uuid": userUUID,
+			"server": server, "port": 1, // the port to dial comes from the record
+			"tls": true, "servername": trServerName, "skip-cert-verify": true,
+			"network": "xhttp", "xhttp-opts": map[string]any{"path": "/xh"},
+			"sockopt": map[string]any{"address-port-strategy": strategy},
+		})
+		require.NoError(t, err)
+		require.NoError(t, trRoundTrip(proxy, tg, 1<<20, 20*time.Second), strategy)
+		_ = proxy.Close()
+	}
 }

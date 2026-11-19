@@ -41,6 +41,7 @@ type option struct {
 	mpTcp         bool
 	resolver      resolver.Resolver
 	netDialer     NetDialer
+	sockopt       Sockopt
 }
 
 type Option func(opt *option)

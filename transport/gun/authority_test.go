@@ -45,3 +45,33 @@ func TestAuthority(t *testing.T) {
 		_ = transport.Close()
 	}
 }
+
+func TestUserAgentAlias(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	agents := make(chan string, 4)
+	protocols := new(http.Protocols)
+	protocols.SetUnencryptedHTTP2(true)
+	server := &http.Server{
+		Protocols: protocols,
+		Handler:   http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { agents <- r.UserAgent() }),
+	}
+	go func() { _ = server.Serve(l) }()
+	defer server.Close()
+	dial := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", l.Addr().String())
+	}
+	for agent, want := range map[string]string{"": "grpc-go/1.36.0", "chrome": "Chrome/", "firefox": "Firefox/", "edge": "Edg/", "my-agent": "my-agent", "golang": "grpc-go/1.36.0"} {
+		transport := NewTransport(dial, nil, &Config{ServiceName: "gun", Host: "example.org", UserAgent: agent})
+		conn, err := transport.Dial()
+		require.NoError(t, err)
+		select {
+		case got := <-agents:
+			require.Contains(t, got, want, agent)
+		case <-time.After(5 * time.Second):
+			t.Fatal("no request")
+		}
+		_ = conn.Close()
+		_ = transport.Close()
+	}
+}
