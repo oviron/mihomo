@@ -1,0 +1,59 @@
+name: oviron test
+
+# The tests of a layer on every push to it. The layers above utls have
+# xraytest/, which runs the outbounds against a real Xray-core binary; the
+# full layer also needs MinIO, Unbound and ping sockets.
+on:
+  push:
+    branches: [utls, compat, full]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  XRAY_VERSION: v26.11.9
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Layer
+        id: layer
+        run: |
+          if [ -f FORK-FULL.md ]; then echo "name=full"; echo "go=1.27"
+          elif [ -f FORK-COMPAT.md ]; then echo "name=compat"; echo "go=1.26"
+          else echo "name=utls"; echo "go=1.26"; fi >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.layer.outputs.go }}
+          check-latest: true
+      - name: Xray-core
+        if: steps.layer.outputs.name != 'utls'
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP/bin"
+          url=https://github.com/XTLS/Xray-core/releases/download/$XRAY_VERSION
+          curl -fsSL -O "$url/Xray-linux-64.zip" -O "$url/Xray-linux-64.zip.dgst"
+          want=$(grep -i 'SHA2-256' Xray-linux-64.zip.dgst | awk '{print $NF}')
+          echo "$want  Xray-linux-64.zip" | sha256sum -c -
+          unzip -q Xray-linux-64.zip xray && chmod +x xray && ./xray version | head -1
+          echo "XRAY_BIN=$RUNNER_TEMP/bin/xray" >> "$GITHUB_ENV"
+      - name: MinIO, Unbound, ping sockets
+        if: steps.layer.outputs.name == 'full'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq unbound
+          sudo systemctl disable --now unbound || true
+          docker create --name minio cgr.dev/chainguard/minio
+          docker cp minio:/usr/bin/minio "$RUNNER_TEMP/bin/minio" && docker rm minio
+          sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+          # a copy: AppArmor confines /usr/sbin/unbound and keeps it from the config of a test
+          cp /usr/sbin/unbound "$RUNNER_TEMP/bin/unbound"
+          test -x "$RUNNER_TEMP/bin/unbound" && test -x "$RUNNER_TEMP/bin/minio"
+          echo "UNBOUND_BIN=$RUNNER_TEMP/bin/unbound" >> "$GITHUB_ENV"
+          echo "MINIO_BIN=$RUNNER_TEMP/bin/minio" >> "$GITHUB_ENV"
+      - name: Test
+        run: go test -tags with_gvisor -count=1 ./...

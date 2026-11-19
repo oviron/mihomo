@@ -1,8 +1,10 @@
 name: oviron release
 
+# One workflow for the three layers of the fork. The tag names the layer:
+# v<upstream>-utls.<n>, v<upstream>-compat.<n>, v<upstream>-full.<n>.
 on:
   push:
-    tags: ["v*-oviron.*"]
+    tags: ["v*-utls.*", "v*-compat.*", "v*-full.*"]
 
 permissions:
   contents: read
@@ -17,9 +19,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Go version of the layer
+        id: go
+        run: |
+          # the full layer has code that needs Go 1.27, the others are built like upstream
+          case "$GITHUB_REF_NAME" in *-full.*) echo "version=1.27" ;; *) echo "version=1.26" ;; esac >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: ${{ steps.go.outputs.version }}
           check-latest: true
       - name: Build
         env:
@@ -56,9 +63,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          base=${GITHUB_REF_NAME%-oviron.*}
+          tag=$GITHUB_REF_NAME
+          layer=${tag##*-}; layer=${layer%%.*}
+          base=${tag%-$layer.*}
           utls=$(go list -m -f '{{.Replace.Path}} {{.Replace.Version}}' github.com/metacubex/utls)
           cd dist && sha256sum mihomo-*.gz > SHA256SUMS && cd ..
-          printf 'Upstream MetaCubeX/mihomo %s with `%s` in place of metacubex/utls.\n\nSee FORK.md for what differs.\n' \
-            "$base" "$utls" > notes.md
-          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --notes-file notes.md
+          case "$layer" in
+            utls)   what="the TLS fingerprints of \`$utls\`"; doc=FORK.md ;;
+            compat) what="the layer \`utls\` plus the fixes of compatibility with Xray-core servers"; doc=FORK-COMPAT.md ;;
+            full)   what="the layer \`compat\` plus the client side of what an Xray-core server offers"; doc=FORK-FULL.md ;;
+          esac
+          printf 'Layer `%s` on upstream MetaCubeX/mihomo %s: %s.\n\nSee [%s](https://github.com/%s/blob/%s/%s) and the map of the layers in [FORK.md](https://github.com/%s/blob/%s/FORK.md).\n' \
+            "$layer" "$base" "$what" "$doc" "$GITHUB_REPOSITORY" "$tag" "$doc" "$GITHUB_REPOSITORY" "$tag" > notes.md
+          # the layer in daily use is the one GitHub shows as the latest release
+          latest=false; [ "$layer" = compat ] && latest=true
+          gh release create "$tag" dist/* --verify-tag --title "$tag" --notes-file notes.md --latest="$latest"

@@ -1,7 +1,26 @@
 # oviron/mihomo
 
-Fork of [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) that changes
-only TLS fingerprints: `github.com/metacubex/utls` is replaced with
+Fork of [MetaCubeX/mihomo](https://github.com/MetaCubeX/mihomo) for clients of
+Xray-core servers. It is three layers, each a branch that sits on the one
+before it and adds one thing:
+
+| Branch | Adds | Described in | Size |
+|---|---|---|---|
+| `utls` | on upstream: the TLS fingerprints of [oviron/utls](https://github.com/oviron/utls) | this file | a `replace` and one name |
+| `compat` | on `utls`: fixes where mihomo as a client disagreed with an Xray-core 26.11.9 server | `FORK-COMPAT.md` | about 460 lines |
+| `full` | on `compat`: the client side of everything else such a server offers (finalmask, Mux.Cool, MASQUE, XDrive, reverse and more) | `FORK-FULL.md` | about 17 thousand lines |
+
+`compat` is the default branch and the one in daily use. `full` is for a
+server that has one of its features turned on; it is kept in step so that it
+is ready when needed. `utls` alone is upstream with other fingerprints.
+
+What goes where: a fix of something the client already does belongs to
+`compat`, a new feature to `full`, and `utls` takes nothing but fingerprints.
+A layer does not edit the `FORK*.md` of the layers below it.
+
+## Fingerprints
+
+`github.com/metacubex/utls` is replaced with
 [oviron/utls](https://github.com/oviron/utls) (MetaCubeX `v1.9.0-alpha.1` plus
 a Firefox 158 parrot and Chrome 155 from refraction-networking/utls). See its
 `FORK.md` for the details.
@@ -33,21 +52,44 @@ the handshake when the server picks P-256 instead of failing.
 
 ## Versions
 
-Branch `oviron` sits on an upstream release tag. A fork release is tagged
-`v<upstream>-oviron.<n>` (for example `v1.19.34-oviron.1`), and `mihomo -v` prints
-that tag. Pushing such a tag runs `.github/workflows/oviron-release.yml`, which
-publishes gzipped `linux-arm64` and `darwin-arm64` binaries named like upstream
-assets (`mihomo-linux-arm64-<tag>.gz`) with `SHA256SUMS`. The upstream build
-workflows are disabled in this repository.
+Every layer sits on an upstream release tag through the layers below it. A
+release is tagged `v<upstream>-<layer>.<n>`, for example `v1.19.34-compat.1`,
+and `mihomo -v` prints the tag. `<n>` is the revision of the fork on that
+upstream release: a change in a layer releases that layer and every layer
+above it under the next `<n>`, so the same `<n>` on two layers means the same
+stack. `<n>` starts again at 1 on a new upstream release.
+
+Pushing a tag runs `.github/workflows/oviron-release.yml`, which publishes
+gzipped `linux-arm64` and `darwin-arm64` binaries named like upstream assets
+(`mihomo-linux-arm64-<tag>.gz`) with `SHA256SUMS`. `utls` and `compat` are
+built with Go 1.26, `full` with Go 1.27. Only a `compat` release is marked the
+latest. `.github/workflows/oviron-test.yml` runs the tests of a layer on every
+push to its branch. The upstream workflows are disabled in this repository.
+
+Releases before the layers were tagged `v<upstream>-oviron.<n>`:
+`v1.19.34-oviron.2` is `utls`, `v1.19.34-oviron.4` is `compat`, and
+`v1.19.34-oviron.3` is `full`, with the commit-by-commit history of that
+layer.
 
 ## New upstream release
 
+The layers move bottom up, each onto the new place of the one below. Remember
+where each branch was, then:
+
 ```sh
 git fetch upstream --tags
-git rebase --onto vNEW vOLD oviron
+old_utls=$(git rev-parse utls) old_compat=$(git rev-parse compat)
+git rebase --onto vNEW vOLD utls
 go mod tidy && go build ./...
-git tag vNEW-oviron.1 && git push origin oviron vNEW-oviron.1
+git rebase --onto utls "$old_utls" compat
+git rebase --onto compat "$old_compat" full
+# every layer: the three branches are a chain, the build and the tests pass
+git merge-base --is-ancestor utls compat && git merge-base --is-ancestor compat full
+git push --force-with-lease origin utls compat full
+git tag vNEW-utls.1 utls && git tag vNEW-compat.1 compat && git tag vNEW-full.1 full
+git push origin vNEW-utls.1 vNEW-compat.1 vNEW-full.1
 ```
 
-When upstream moves to a utls with Firefox 158 of its own, the fork is no longer
-needed.
+When upstream moves to a utls with Firefox 158 and Chrome 155 of its own, the
+`replace` can go and `utls` with it; `compat` and `full` stay until upstream
+has what they add.
