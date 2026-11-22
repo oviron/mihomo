@@ -25,6 +25,12 @@ A layer does not edit the `FORK*.md` of the layers below it.
 a Firefox 158 parrot and Chrome 155 from refraction-networking/utls). See its
 `FORK.md` for the details.
 
+oviron/utls requires `github.com/klauspost/compress` v1.20.4: before v1.20.2 a
+crafted zstd-compressed certificate panics the decoder on its own goroutine and
+takes the process down
+([GHSA-fpmh-frq8-7rj8](https://github.com/klauspost/compress/security/advisories/GHSA-fpmh-frq8-7rj8)).
+That version needs Go 1.25, so the `go` line of this module is 1.25, not 1.20.
+
 What that means for `client-fingerprint`:
 
 | value | upstream v1.19.34 | this fork |
