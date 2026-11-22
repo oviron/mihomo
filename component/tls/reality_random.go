@@ -34,10 +34,11 @@ func hybridFingerprint(picked UClientHelloID) UClientHelloID {
 		return picked
 	}
 	var choices []weightedrand.Choice[string, int]
-	for _, choice := range []weightedrand.Choice[string, int]{ // the weights of randomFingerprint
+	// The weights of randomFingerprint as upstream has them since a9e5c456,
+	// without ios; ios has no X25519MLKEM768 key share and is never kept here.
+	for _, choice := range []weightedrand.Choice[string, int]{
 		weightedrand.NewChoice("chrome", 6),
 		weightedrand.NewChoice("safari", 3),
-		weightedrand.NewChoice("ios", 2),
 		weightedrand.NewChoice("firefox", 1),
 	} {
 		if hasX25519MLKEM768(fingerprints[choice.Item]) {

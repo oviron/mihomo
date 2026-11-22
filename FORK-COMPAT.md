@@ -51,6 +51,8 @@ Fewer than four values mean Xray's defaults. Without the key nothing changes.
 - `random` over REALITY with `reality-opts.support-x25519mlkem768` picks only
   among the fingerprints that carry the key share (chrome, safari, firefox).
   Xray answers the `ios` ClientHello, which has none, with the fallback site.
+- XHTTP no longer reuses a pooled connection that has expired
+  (MetaCubeX/mihomo#3479, picked from upstream `Alpha`).
 - The SOCKS5 outbound fails a request the server rejected; the reply code used
   to be ignored and the client went on with a garbage address.
 - VLESS `encryption` bounds a record by 16640 bytes like Xray-core, not by
