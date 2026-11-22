@@ -29,7 +29,9 @@ oviron/utls requires `github.com/klauspost/compress` v1.20.4: before v1.20.2 a
 crafted zstd-compressed certificate panics the decoder on its own goroutine and
 takes the process down
 ([GHSA-fpmh-frq8-7rj8](https://github.com/klauspost/compress/security/advisories/GHSA-fpmh-frq8-7rj8)).
-That version needs Go 1.25, so the `go` line of this module is 1.25, not 1.20.
+That version needs Go 1.25, so the `go` line of this module is 1.25, not 1.20;
+`godebug default=go1.20` keeps the runtime GODEBUG defaults (timers, TLS, x509,
+net/http) where upstream has them.
 
 What that means for `client-fingerprint`:
 

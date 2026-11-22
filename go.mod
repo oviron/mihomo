@@ -2,6 +2,10 @@ module github.com/metacubex/mihomo
 
 go 1.25
 
+// Keep runtime GODEBUG defaults at the go1.20 level upstream declares: the go
+// line is 1.25 only because klauspost/compress v1.20.4 needs it.
+godebug default=go1.20
+
 require (
 	github.com/bahlo/generic-list-go v0.2.0
 	github.com/coreos/go-iptables v0.8.0
